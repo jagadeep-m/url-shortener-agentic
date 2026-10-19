@@ -23,7 +23,17 @@ builder.Services.AddHostedService<ClickRecorder>();
 builder.Services.AddProblemDetails();
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options => options.SwaggerDoc("v1", new() { Title = "URL Shortener", Version = "v1" }));
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new()
+    {
+        Title = "URL Shortener", Version = "v1",
+        Description = "Create short links, follow them, and read click analytics. Errors use RFC 7807 ProblemDetails."
+    });
+    // Read C# nullable annotations, so non-nullable members are documented as required and not nullable.
+    options.SupportNonNullableReferenceTypes();
+    options.NonNullableReferenceTypesAsRequired();
+});
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("sqlite", tags: ["ready"]);
 builder.Services.AddRateLimiter(options =>
 {

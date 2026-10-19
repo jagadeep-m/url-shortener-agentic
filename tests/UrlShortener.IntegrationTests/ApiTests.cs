@@ -210,6 +210,15 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Contains("Swagger UI", await client.GetStringAsync("/swagger/index.html"));
         var document = await client.GetFromJsonAsync<JsonElement>("/swagger/v1/swagger.json");
         Assert.True(document.GetProperty("paths").TryGetProperty("/api/v1/links", out _));
+        // The documented contract matches the real one: required members, summaries and the redirect's Location header.
+        var schemas = document.GetProperty("components").GetProperty("schemas");
+        Assert.Equal(["longUrl"], schemas.GetProperty("CreateLinkRequest").GetProperty("required").EnumerateArray().Select(x => x.GetString()));
+        Assert.False(schemas.GetProperty("CreateLinkRequest").GetProperty("properties").GetProperty("longUrl").TryGetProperty("nullable", out _));
+        Assert.Contains("code", schemas.GetProperty("LinkResponse").GetProperty("required").EnumerateArray().Select(x => x.GetString()));
+        var paths = document.GetProperty("paths");
+        Assert.Equal("Create a short link", paths.GetProperty("/api/v1/links").GetProperty("post").GetProperty("summary").GetString());
+        Assert.Contains("128 characters", paths.GetProperty("/api/v1/links").GetProperty("post").GetProperty("parameters")[0].GetProperty("description").GetString());
+        Assert.True(paths.GetProperty("/{code}").GetProperty("get").GetProperty("responses").GetProperty("302").GetProperty("headers").TryGetProperty("Location", out _));
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/live")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
         await using var scope = factory.Services.CreateAsyncScope();
