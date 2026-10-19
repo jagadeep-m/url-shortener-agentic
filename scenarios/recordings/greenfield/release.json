@@ -1,0 +1,6 @@
+{
+  "summary": "Ready for human release-readiness review",
+  "rationale": "All upstream stages must have completed, including the host validation gate; a human owns the final readiness decision.",
+  "content": "# Release readiness\n\nConfirm the recorded acceptance criteria, inspect build.log and test.log, review remaining prototype limitations and decide readiness. No deployment, push, commit or release is performed by this stage.",
+  "files": []
+}

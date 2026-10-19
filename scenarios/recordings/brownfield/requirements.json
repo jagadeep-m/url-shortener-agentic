@@ -1,0 +1,6 @@
+{
+  "summary": "Per-link click limit acceptance criteria",
+  "rationale": "A change to an existing service: keep every current behaviour for links without a limit and make the new rule testable.",
+  "content": "# Requirements: per-link click limit\n\n1. POST /api/v1/links accepts optional `maxClicks` (integer 1–1,000,000). Out of range returns 400 ProblemDetails.\n2. A link with a limit redirects (302) until it has recorded `maxClicks` clicks; after that GET /{code} returns 410 Gone.\n3. Links without a limit behave exactly as today (redirects, stats, expiry, soft delete, idempotency).\n4. GET /api/v1/links/{code} reports `maxClicks` (null when unlimited).\n5. Existing data: links created before the change are unlimited. Idempotency keys stored before the change must still replay.\n\nNon-goals: hard real-time enforcement under concurrent bursts (clicks are recorded asynchronously, so the limit is soft by a few in-flight clicks).\n\nOpen question resolved by the product owner: \"click\" means a recorded redirect, the same number /stats reports.",
+  "files": []
+}

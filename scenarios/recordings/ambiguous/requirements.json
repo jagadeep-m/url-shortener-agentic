@@ -1,0 +1,36 @@
+{
+  "variants": [
+    {
+      "whenInputContains": [
+        "- Q1: A",
+        "- Q2: B",
+        "- Q3: A"
+      ],
+      "response": {
+        "summary": "Requirements: target URL screening and CSV export",
+        "rationale": "Derived from the human answers Q1=A, Q2=B, Q3=A recorded in open-questions.md.",
+        "content": "# Requirements\n\nSecurity scope: target URL screening.\n\n1. POST /api/v1/links rejects targets whose host is on a configurable denylist (400 ProblemDetails, reason \"blocked target\").\n2. The denylist is loaded from configuration and can be reloaded without a restart.\n3. GET /api/v1/links/{code}/clicks.csv?from=&to= exports click events (UTC timestamp, referrer, user agent; IP hash only) for a date range of at most 31 days.\n4. No new personal data is stored (Q3=A).\n\nAcceptance: blocked host → 400; allowed host → 201; CSV has a header row and one row per click in range; range > 31 days → 400.",
+        "files": []
+      }
+    },
+    {
+      "whenInputContains": [
+        "- Q1: C",
+        "- Q2: B",
+        "- Q3: A"
+      ],
+      "response": {
+        "summary": "Requirements: API keys for link creation and CSV export",
+        "rationale": "Derived from the human answers Q1=C, Q2=B, Q3=A recorded in open-questions.md (Q1 changed from A to C).",
+        "content": "# Requirements\n\nSecurity scope: API key for link creation.\n\n1. POST /api/v1/links requires header X-Api-Key matching a configured key (hashed at rest); missing or wrong key → 401 ProblemDetails.\n2. Redirects, details and stats stay public.\n3. GET /api/v1/links/{code}/clicks.csv?from=&to= exports click events (UTC timestamp, referrer, user agent; IP hash only) for at most 31 days, and requires the API key.\n4. No new personal data is stored (Q3=A).\n\nAcceptance: no key → 401; valid key → 201; CSV header and rows as specified; range > 31 days → 400.",
+        "files": []
+      }
+    }
+  ],
+  "default": {
+    "summary": "Requirements from the recorded answers",
+    "rationale": "Replay has no recording for this combination of answers; live mode would derive requirements from them.",
+    "content": "# Requirements\n\nThe replay fixture only covers the demo answers (Q1=A or C, Q2=B, Q3=A). Use live mode for other combinations.",
+    "files": []
+  }
+}

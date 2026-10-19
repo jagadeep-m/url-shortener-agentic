@@ -1,0 +1,34 @@
+name: ambiguous
+requirement: Make the links more secure and give marketing better analytics.
+retry:
+  maxAttempts: 3
+  backoff: exponential
+  baseSeconds: 2
+budget:
+  maxMinutes: 20
+  maxTokens: 400000
+stages:
+  # The Requirements role in clarification mode: writes open-questions.md and pauses for answers.
+  - id: clarify
+    agent: Clarifier
+    risk: High
+  - id: requirements
+    agent: Requirements
+    dependsOn: [clarify]
+    risk: High
+  - id: design
+    agent: Architect
+    dependsOn: [requirements]
+    risk: High
+  - id: docs
+    agent: Docs
+    dependsOn: [design]
+    risk: Low
+  - id: validate
+    agent: Reviewer
+    dependsOn: [docs]
+    risk: Medium
+  - id: release
+    agent: Release
+    dependsOn: [validate]
+    risk: High

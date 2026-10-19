@@ -1,0 +1,6 @@
+{
+  "summary": "URL shortener acceptance criteria",
+  "rationale": "Keep the established product contract and demonstrate the SDLC workflow without external model access.",
+  "content": "# Requirements\n\nCreate returns 201; duplicate aliases return 409; invalid URLs return 400. Redirect returns 302, unknown codes 404 and expired/disabled links 410. Stats count background clicks; delete is soft. POST is rate limited and idempotent. Health and Swagger are available.\n\nCodes are seven random Base62 characters. Timestamps are UTC; store an IP hash, never raw IP.\n\nReplay scope: re-emit the already implemented Base62 generator and domain tests, write workflow documentation, then execute the full solution build/test gate. This recording is a deterministic demonstration, not a fresh implementation of every endpoint.\n\nApproval accepts these requirements for this replay run.",
+  "files": []
+}

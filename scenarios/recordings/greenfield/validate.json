@@ -1,0 +1,6 @@
+{
+  "summary": "Review the implementation, tests and documentation",
+  "rationale": "The host must independently verify build and test success before this stage completes.",
+  "content": "# Review\n\nGenerator, tests and documentation agree with the approved design. No new packages or migrations are proposed. This recorded review is not evidence of successful execution; inspect the host-generated build.log and test.log.",
+  "files": []
+}

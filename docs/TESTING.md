@@ -1,0 +1,134 @@
+# Testing
+
+```bash
+dotnet build
+dotnet test
+```
+
+204 tests, about 5 seconds, no network, no external database. Each test uses its own temporary
+SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
+Requires the .NET 8 runtimes (see the README).
+
+## Test pyramid
+
+| Level | Where | Count | What it proves |
+| --- | --- | --- | --- |
+| Unit | UrlShortener.UnitTests; most of Orchestrator.Tests | ~150 | Domain rules, validators, services with fakes; policies, diffing, parsing, metrics maths, DAG validation, engine mechanisms with stage doubles |
+| Integration | UrlShortener.IntegrationTests; engine tests on real SQLite and git | ~55 | Real EF Core migrations, SQL behaviour, HTTP pipeline via `WebApplicationFactory`; orchestrator state, audit and rollback on real files and repositories |
+| Scenario (replay) | WorkflowTests, ScenarioReplayTests, GuardrailTests | ~20 | Whole runs through the real engine, agents, policies and stages, using recorded model output |
+| End-to-end (manual / CI) | `dotnet run --project src/Orchestrator.Cli -- run scenarios/<name>.yaml --replay` | 3 scenarios | The CLI with real git branches and the real `dotnet build` / `dotnet test` gates. Committed results are in `runs/` |
+
+## What each project covers
+
+**UrlShortener.UnitTests (43)**
+- DomainTests: generator length, Base62 alphabet and a 10,000-code uniqueness sample; code and
+  URL rules; UTC enforcement; expiry boundary; idempotent disable; IP-hash-only clicks
+- LinkServiceTests: collision retry bound (one try plus three retries), custom alias conflicts,
+  reserved generated codes, own-host rejection, idempotency key rules, expiry validation
+
+**UrlShortener.IntegrationTests (41)**
+- ApiTests (`WebApplicationFactory`, a temporary SQLite file per class):
+  - create and details; duplicate alias → 409
+  - invalid URLs → 400 (`javascript:`, `data:`, own host, over 2,048 characters, malformed JSON)
+  - redirect → 302, unknown → 404, expired → 410, delete then redirect → 410
+  - stats after 3 clicks (per day, top referrers, hashed IP)
+  - idempotent POST, including across concurrency and restarts
+  - Swagger, health checks, and no automatic migration in Production
+- PersistenceTests:
+  - migrations applied via `MigrateAsync`, matching the model, reversible
+  - unique and composite indexes; foreign keys; UTC round-trips
+  - 20 concurrent writers producing atomic click totals; transaction rollback when the event
+    insert fails
+- RateLimitTests: per-IP 429 with `Retry-After`
+- ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
+
+**Orchestrator.Tests (120)**
+
+| Class | Covers |
+| --- | --- |
+| ScenarioTests | strict YAML, topological order, cycle and unknown-dependency errors, budget/retry validation, artifact hashing |
+| RunEngineTests | entry gate blocks, exit failure publishes nothing, approvals, checkpoints and resume across new instances, cancellation, lineage validation, run leases, stale-write protection, one audit line per event |
+| ResilienceTests | barrier-proven parallel waves with overlapping timestamps and a join; bounded retries carrying the failure reason; fallback order; token- and time-budget safe-stop; rollback on a real git repository |
+| GitWorkspaceTests | branch per run, commits scoped to agent paths, revert of modified and new files, refusal of dirty, staged or empty repositories |
+| AgentTests | every role's structured output and parent decisions; replay selection (variant, attempt, base); retry feedback in prompts; templates; boundary and symlink escapes; build/test output parsing |
+| PolicyTests | Allow, RequireApproval and Deny for each of the six policies; unified diff format, hunks and line numbers |
+| GuardrailTests | an agent cannot write `.github/` or commit a fake API key (and the key never reaches the audit log); approval shows reasons and the diff; new package detection |
+| WorkflowTests | greenfield replay end to end with real policies; Tester retry; editing design re-runs only downstream stages; resume after an edit; console approval paths |
+| MetricsTests | success rate, retry rate, MTTR, human wait, machine time and per-stage latency from a hand-written audit log; aggregates; live Meter instruments; report and lineage rendering |
+| CodebaseIndexTests | Roslyn endpoints with group prefixes, table mappings, affected files/endpoints/tables/tests, unknown seeds; indexes the real solution |
+| OpenQuestionsTests | answer normalisation, canonical round-trip, the 2–3 interpretation rule |
+| ScenarioReplayTests | brownfield on real git (impact report, migration approval twice, rollback, `diff.patch`); ambiguous (answers as decisions, mid-run answer change re-plans, unanswered questions block) |
+
+Every orchestrator mechanism (gates, approvals, retries, fallback, rollback, safe-stop,
+policies, audit, lineage, metrics, re-planning) has at least one test that fails if the mechanism
+is removed.
+
+## How the gates use the tests
+
+The orchestrator does not trust an agent's claim that code works. Its exit gate for any stage that
+changes `.cs` or `.csproj` files, and always for the Reviewer, runs:
+
+1. `dotnet build` of the whole solution (warnings are errors in `src/`)
+2. `dotnet test` of `tests/UrlShortener.UnitTests` and `tests/UrlShortener.IntegrationTests`
+
+The orchestrator's own tests are excluded because agents cannot change the orchestrator, and its
+timing-sensitive tests should not decide product gates. Pass/fail/skip counts, the first failing
+test names and compiler errors become the gate reason, which is fed into the retry prompt. Logs are
+kept as `runs/<runId>/<stage>.attempt<N>.build.log` and `.test.log`. A gate with zero test results
+fails.
+
+In the scenarios, the Tester's first greenfield attempt (a wrong assertion) and the Coder's first
+brownfield attempt (a NOT NULL migration, which fails 15 integration tests) are caught this way,
+rolled back and retried.
+
+## Coverage
+
+Collected with the coverage collector that ships with `Microsoft.NET.Test.Sdk` (no extra package):
+
+```bash
+dotnet test --collect "Code Coverage;Format=cobertura" --results-directory ./TestResults
+```
+
+Line and branch coverage of the solution's assemblies, excluding EF-generated migration code
+(measured on 2026-10-18):
+
+| Assembly | Line | Branch |
+| --- | --- | --- |
+| UrlShortener.Domain | 100.0% (75/75) | 100.0% |
+| UrlShortener.Application | 100.0% (71/71) | 100.0% |
+| UrlShortener.Infrastructure | 96.9% (154/159) | 85.3% |
+| UrlShortener.Api | 96.7% (148/153) | 83.8% |
+| Orchestrator.Core | 98.0% (949/968) | 89.6% |
+| Orchestrator.Agents | 86.7% (561/647) | 80.4% |
+| Orchestrator.Policies | 75.5% (111/147) | 81.9% |
+| Orchestrator.Cli | 46.1% (111/241) | 37.4% |
+| **Total** | **88.6% (2,180/2,461)** | **81.0%** |
+
+Known gaps:
+- `Orchestrator.Cli` `Main` (argument parsing, wiring, stop polling) is exercised by the
+  end-to-end runs, not unit tests.
+- The vulnerability scanner's process path (it restores a probe project and needs network) is
+  covered only through its JSON parser and a fake.
+- The live `OpenAiCompatibleChatClient` HTTP path is not tested, because that needs a key.
+
+## Flakiness controls
+
+- Retry delays in tests use a 1 ms base.
+- Parallelism is proven with a barrier that only opens if three stages run at once, not with
+  sleeps.
+- The time-budget test uses a 1.2 s budget and raises it before resume.
+- Click-ingestion tests poll for up to 10 s instead of sleeping.
+- New tests were run at least three times in a row before being accepted.
+
+## Migration tooling (developers)
+
+```bash
+dotnet tool install --global dotnet-ef --version 8.0.32
+```
+
+```bash
+dotnet ef migrations add <Name> --project src/UrlShortener.Infrastructure --startup-project src/UrlShortener.Infrastructure --output-dir Migrations
+```
+
+The design-time factory accepts a connection string as its first argument. Development startup
+applies migrations; other environments must apply them explicitly before readiness succeeds.

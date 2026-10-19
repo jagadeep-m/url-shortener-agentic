@@ -1,0 +1,32 @@
+{
+  "variants": [
+    {
+      "whenInputContains": [
+        "Security scope: target URL screening"
+      ],
+      "response": {
+        "summary": "Design: denylist validator and CSV export endpoint",
+        "rationale": "Both features fit existing layers without schema changes.",
+        "content": "# Design\n\nScope: target URL screening + CSV export.\n\n## Tasks (decomposition)\n1. Application: `ITargetScreen` with a configuration-backed denylist (IOptionsMonitor for reload); called by LinkService.CreateAsync after URL validation. No migration.\n2. Infrastructure: click export query by link and UTC range, streamed (no full materialisation).\n3. API: `GET /api/v1/links/{code}/clicks.csv` writing text/csv; 31-day range validation.\n4. Tests: denylisted host 400, allowed 201, CSV header/rows, range limit.\n5. Docs: operator guide for the denylist and the export.\n\nDependencies: 1 and 2 are independent; 3 depends on 2; 4 depends on 1–3.\n\nRisks: denylist freshness (reload interval); CSV injection — prefix cells starting with = + - @ with a quote.",
+        "files": []
+      }
+    },
+    {
+      "whenInputContains": [
+        "Security scope: API key for link creation"
+      ],
+      "response": {
+        "summary": "Design: API key middleware and CSV export endpoint",
+        "rationale": "Authentication is isolated in one endpoint filter; export reuses the click query.",
+        "content": "# Design\n\nScope: API key for link creation + CSV export.\n\n## Tasks (decomposition)\n1. API: endpoint filter `RequireApiKey` comparing a SHA-256 of X-Api-Key with configured hashes in constant time; applied to POST and the CSV export only.\n2. Configuration: keys stored as hashes in user-secrets/environment, never in appsettings.json.\n3. Infrastructure: click export query by link and UTC range, streamed.\n4. API: `GET /api/v1/links/{code}/clicks.csv` with 31-day range validation.\n5. Tests: 401 without/with wrong key, 201 with key, CSV header/rows, range limit.\n6. Docs: key rotation and export guide.\n\nDependencies: 1–2 before 4; 3 before 4; 5 after all.\n\nRisks: key leakage in logs (never log the header); clients must be updated before enforcement — ship behind a feature flag.",
+        "files": []
+      }
+    }
+  ],
+  "default": {
+    "summary": "Design from the recorded requirements",
+    "rationale": "Replay has no design for this combination.",
+    "content": "# Design\n\nNo recorded design for these answers.",
+    "files": []
+  }
+}

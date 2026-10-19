@@ -1,0 +1,13 @@
+diff --git a/docs/generated/greenfield.md b/docs/generated/greenfield.md
+new file mode 100644
+index 0000000..2ebd578
+--- /dev/null
++++ b/docs/generated/greenfield.md
+@@ -0,0 +1,7 @@
++# Greenfield replay
++
++Run `dotnet run --project src/Orchestrator.Cli -- run scenarios/greenfield.yaml --replay` from the solution root. Review Requirements, Design and Release.
++
++This fixture re-emits the pinned Base62 generator and domain tests into the existing Phase 2 solution. It does not rebuild the entire product from scratch. It writes through FileChangeService and then runs the full solution build/test gate without restore.
++
++Use the run directory for approved artifacts, decision lineage, audit JSONL and validation logs. Release is a readiness decision, not deployment.

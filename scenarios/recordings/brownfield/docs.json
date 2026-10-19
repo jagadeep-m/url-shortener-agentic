@@ -1,0 +1,11 @@
+{
+  "summary": "Document per-link click limits",
+  "rationale": "Operators and API users need the contract and the soft-limit trade-off.",
+  "content": "# Documentation\n\nAdds docs/generated/click-limits.md.",
+  "files": [
+    {
+      "path": "docs/generated/click-limits.md",
+      "content": "# Per-link click limits\n\n`POST /api/v1/links` accepts an optional `maxClicks` (1–1,000,000):\n\n```json\n{ \"longUrl\": \"https://example.com/offer\", \"maxClicks\": 100 }\n```\n\nThe link redirects until it has recorded `maxClicks` clicks, then `GET /{code}` returns `410 Gone`.\n`GET /api/v1/links/{code}` shows `maxClicks` (`null` = unlimited). Existing links are unlimited.\n\n## Behaviour notes\n\n- Soft limit: clicks are recorded in the background, so a burst of concurrent redirects can pass the cap by the number of clicks still queued.\n- Capped links read their live click count from the database on each redirect; uncapped links keep using the redirect cache.\n- Schema: migration `AddMaxClicks` adds a nullable `MaxClicks` column to `ShortLinks`; rolling it back drops the column.\n"
+    }
+  ]
+}

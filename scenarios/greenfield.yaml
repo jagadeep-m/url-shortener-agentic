@@ -1,0 +1,43 @@
+name: greenfield
+requirement: >-
+  Build the URL shortener from the project specification: .NET 8, Clean Architecture, SQLite,
+  seven-character random Base62 codes, validated HTTP(S) URLs and aliases,
+  idempotent POST, cached redirects, UTC click analytics with IP hashes,
+  soft delete, rate limits, ProblemDetails, Swagger and health checks.
+  Replay rehearses the approved Base62 generator and domain tests in the existing Phase 2 solution;
+  the Tester's first recorded attempt contains a wrong assertion so the run shows a retry.
+retry:
+  maxAttempts: 3
+  backoff: exponential
+  baseSeconds: 2
+budget:
+  maxMinutes: 20
+  maxTokens: 400000
+stages:
+  - id: requirements
+    agent: Requirements
+    risk: High
+  - id: design
+    agent: Architect
+    dependsOn: [requirements]
+    risk: High
+  - id: implement
+    agent: Coder
+    dependsOn: [design]
+    risk: Medium
+  - id: tests
+    agent: Tester
+    dependsOn: [design]
+    risk: Medium
+  - id: docs
+    agent: Docs
+    dependsOn: [design]
+    risk: Low
+  - id: validate
+    agent: Reviewer
+    dependsOn: [implement, tests, docs]
+    risk: Medium
+  - id: release
+    agent: Release
+    dependsOn: [validate]
+    risk: High

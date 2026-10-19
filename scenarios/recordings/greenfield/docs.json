@@ -1,0 +1,11 @@
+{
+  "summary": "Document the replay workflow",
+  "rationale": "Make recording scope and approval responsibilities explicit.",
+  "content": "# Documentation\n\nThe attached guide explains this offline rehearsal.",
+  "files": [
+    {
+      "path": "docs/generated/greenfield.md",
+      "content": "# Greenfield replay\n\nRun `dotnet run --project src/Orchestrator.Cli -- run scenarios/greenfield.yaml --replay` from the solution root. Review Requirements, Design and Release.\n\nThis fixture re-emits the pinned Base62 generator and domain tests into the existing Phase 2 solution. It does not rebuild the entire product from scratch. It writes through FileChangeService and then runs the full solution build/test gate without restore.\n\nUse the run directory for approved artifacts, decision lineage, audit JSONL and validation logs. Release is a readiness decision, not deployment.\n"
+    }
+  ]
+}

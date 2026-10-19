@@ -1,0 +1,6 @@
+{
+  "summary": "Ready for human release-readiness review",
+  "rationale": "Schema change approved, gates green; deploying needs the migration applied before the new code serves traffic.",
+  "content": "# Release readiness\n\n1. Apply migration AddMaxClicks (additive, nullable; safe with old code running).\n2. Deploy the API.\n3. Rollback: redeploy the previous build; the extra nullable column is ignored by old code, and Down drops it if needed.\n\nNo deployment, push or merge is performed by this stage.",
+  "files": []
+}

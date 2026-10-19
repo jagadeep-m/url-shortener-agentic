@@ -1,0 +1,19 @@
+{
+  "summary": "Change lands in the ShortLink entity, link creation, redirect resolution and link details",
+  "rationale": "The limit is a property of a link (domain + table), set at creation (request, validator, service) and enforced where redirects are resolved; details expose it.",
+  "seeds": [
+    "ShortLink",
+    "CreateLinkRequest",
+    "CreateLinkValidator",
+    "LinkDetails",
+    "LinkService.CreateAsync",
+    "LinkService.ResolveAsync",
+    "LinkService.GetAsync"
+  ],
+  "risks": [
+    "Schema change on ShortLinks: needs an EF Core migration (human approval) that existing rows survive.",
+    "Redirects are served from IMemoryCache, whose cached ClickCount is stale; enforcement must not trust it.",
+    "Idempotency fingerprints hash the serialized request; a new field would change fingerprints of keys stored before deployment.",
+    "Clicks are recorded asynchronously, so concurrent redirects can exceed the limit slightly."
+  ]
+}

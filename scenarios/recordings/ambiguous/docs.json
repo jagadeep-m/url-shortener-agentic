@@ -1,0 +1,42 @@
+{
+  "variants": [
+    {
+      "whenInputContains": [
+        "Scope: target URL screening"
+      ],
+      "response": {
+        "summary": "Document the agreed scope: screening + CSV",
+        "rationale": "Make the human decisions and the resulting scope visible to the team before implementation starts.",
+        "content": "# Documentation\n\nAdds docs/generated/ambiguous-scope.md.",
+        "files": [
+          {
+            "path": "docs/generated/ambiguous-scope.md",
+            "content": "# Agreed scope: \"more secure links, better marketing analytics\"\n\nDecided by a human in open-questions.md:\n\n- Security means screening target URLs against a denylist at creation (Q1 = A).\n- Better analytics means a CSV export of click events for a date range (Q2 = B).\n- No new visitor data is stored; only the IP hash (Q3 = A).\n\nOut of scope for now: API keys, longer codes, country or UTM breakdowns.\n\nImplementation tasks are listed in the approved design; they will run as a brownfield change.\n"
+          }
+        ]
+      }
+    },
+    {
+      "whenInputContains": [
+        "Scope: API key for link creation"
+      ],
+      "response": {
+        "summary": "Document the agreed scope: API keys + CSV",
+        "rationale": "Make the human decisions and the resulting scope visible to the team before implementation starts.",
+        "content": "# Documentation\n\nAdds docs/generated/ambiguous-scope.md.",
+        "files": [
+          {
+            "path": "docs/generated/ambiguous-scope.md",
+            "content": "# Agreed scope: \"more secure links, better marketing analytics\"\n\nDecided by a human in open-questions.md:\n\n- Security means an API key is required to create links (Q1 = C, changed from A during the run).\n- Better analytics means a CSV export of click events for a date range (Q2 = B), also behind the API key.\n- No new visitor data is stored; only the IP hash (Q3 = A).\n\nOut of scope for now: target screening, longer codes, country or UTM breakdowns.\n\nImplementation tasks are listed in the approved design; they will run as a brownfield change.\n"
+          }
+        ]
+      }
+    }
+  ],
+  "default": {
+    "summary": "Document the agreed scope",
+    "rationale": "No recorded docs for these answers.",
+    "content": "# Documentation\n\nNo recording.",
+    "files": []
+  }
+}

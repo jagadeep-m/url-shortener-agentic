@@ -1,0 +1,6 @@
+{
+  "summary": "Ready to hand the approved scope to implementation",
+  "rationale": "The outcome of an ambiguous request is an approved, traceable scope; implementation follows as a separate brownfield run.",
+  "content": "# Release readiness\n\nApprove to hand the design to a brownfield implementation run. Nothing is deployed, pushed or merged by this stage.",
+  "files": []
+}

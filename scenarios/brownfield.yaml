@@ -1,0 +1,47 @@
+name: brownfield
+requirement: >-
+  Add an optional per-link click limit to the existing URL shortener: POST /api/v1/links
+  accepts maxClicks (1-1,000,000); once a link has recorded that many clicks its redirect
+  returns 410 Gone. Links without a limit must behave exactly as they do today.
+  The first recorded implementation attempt contains a migration mistake, so the run shows
+  a failed gate, a rollback to the last good commit and a retry.
+retry:
+  maxAttempts: 3
+  backoff: exponential
+  baseSeconds: 2
+budget:
+  maxMinutes: 20
+  maxTokens: 400000
+stages:
+  - id: requirements
+    agent: Requirements
+    risk: High
+  - id: impact
+    agent: ImpactAnalyst
+    dependsOn: [requirements]
+    risk: High
+  - id: design
+    agent: Architect
+    dependsOn: [impact]
+    risk: High
+  - id: implement
+    agent: Coder
+    dependsOn: [design]
+    risk: Medium
+  - id: docs
+    agent: Docs
+    dependsOn: [design]
+    risk: Low
+  # Brownfield tests exercise the newly implemented API, so they follow implement.
+  - id: tests
+    agent: Tester
+    dependsOn: [implement]
+    risk: Medium
+  - id: validate
+    agent: Reviewer
+    dependsOn: [implement, tests, docs]
+    risk: Medium
+  - id: release
+    agent: Release
+    dependsOn: [validate]
+    risk: High

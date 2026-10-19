@@ -1,0 +1,11 @@
+{
+  "summary": "Emit the approved Base62 generator",
+  "rationale": "Use the verified unbiased cryptographic generator from Phase 1.",
+  "content": "# Implementation\n\nThe attached file implements the approved seven-character Base62 generator.",
+  "files": [
+    {
+      "path": "src/UrlShortener.Domain/Base62CodeGenerator.cs",
+      "content": "using System.Security.Cryptography;\n\nnamespace UrlShortener.Domain;\n\npublic sealed class Base62CodeGenerator : ICodeGenerator\n{\n    private const string Alphabet = \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\";\n    public const int CodeLength = 7;\n\n    public string Generate()\n    {\n        Span<char> characters = stackalloc char[CodeLength];\n        for (var i = 0; i < characters.Length; i++)\n        {\n            characters[i] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];\n        }\n\n        return new string(characters);\n    }\n}\n"
+    }
+  ]
+}

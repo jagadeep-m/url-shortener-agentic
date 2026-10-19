@@ -1,0 +1,17 @@
+diff --git a/docs/generated/ambiguous-scope.md b/docs/generated/ambiguous-scope.md
+new file mode 100644
+index 0000000..92d9934
+--- /dev/null
++++ b/docs/generated/ambiguous-scope.md
+@@ -0,0 +1,11 @@
++# Agreed scope: "more secure links, better marketing analytics"
++
++Decided by a human in open-questions.md:
++
++- Security means an API key is required to create links (Q1 = C, changed from A during the run).
++- Better analytics means a CSV export of click events for a date range (Q2 = B), also behind the API key.
++- No new visitor data is stored; only the IP hash (Q3 = A).
++
++Out of scope for now: target screening, longer codes, country or UTM breakdowns.
++
++Implementation tasks are listed in the approved design; they will run as a brownfield change.

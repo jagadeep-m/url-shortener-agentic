@@ -1,0 +1,6 @@
+{
+  "summary": "Approve the Clean Architecture design",
+  "rationale": "SQLite and in-process components satisfy the prototype constraints without extra infrastructure.",
+  "content": "# Design\n\nDomain has entities and ICodeGenerator; Application owns use cases and repository interfaces; Infrastructure implements SQLite persistence; API composes endpoints and background clicks. Dependency direction points inward.\n\nBase62CodeGenerator.Generate returns seven characters using RandomNumberGenerator.GetInt32, which avoids modulo bias. Domain tests check length, charset, 10,000 samples and entity invariants.\n\nWorkflow: requirements -> design -> implement/tests/docs -> validate -> release. Implement, tests and docs run concurrently; their changes land one at a time through real exit gates. Requirements, Design and Release require approval.\n\nReplay writes the pinned Base62 generator, pinned DomainTests and docs/generated/greenfield.md. Remaining product files are prerequisites from Phases 1–2. Validate must run real dotnet build and dotnet test; Release is readiness only, with no deployment.",
+  "files": []
+}

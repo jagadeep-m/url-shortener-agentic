@@ -1,0 +1,113 @@
+{
+  "runId": "f0f8eac8-2e43-47b5-8419-1b5261d5bde1",
+  "scenario": "greenfield",
+  "replay": true,
+  "requirement": "Build the URL shortener from AGENTS.md: .NET 8, Clean Architecture, SQLite, seven-character random Base62 codes, validated HTTP(S) URLs and aliases, idempotent POST, cached redirects, UTC click analytics with IP hashes, soft delete, rate limits, ProblemDetails, Swagger and health checks. Replay rehearses the approved Base62 generator and domain tests in the existing Phase 2 solution; the Tester\u0027s first recorded attempt contains a wrong assertion so the run shows a retry.",
+  "maxMinutes": 20,
+  "maxTokens": 400000,
+  "retry": {
+    "maxAttempts": 3,
+    "backoff": "exponential",
+    "baseSeconds": 2
+  },
+  "stages": [
+    {
+      "id": "requirements",
+      "agent": "Requirements",
+      "dependsOn": [],
+      "risk": "high",
+      "wave": 1,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "design",
+      "agent": "Architect",
+      "dependsOn": [
+        "requirements"
+      ],
+      "risk": "high",
+      "wave": 2,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "implement",
+      "agent": "Coder",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "medium",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "tests",
+      "agent": "Tester",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "medium",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "docs",
+      "agent": "Docs",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "low",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "validate",
+      "agent": "Reviewer",
+      "dependsOn": [
+        "implement",
+        "tests",
+        "docs"
+      ],
+      "risk": "medium",
+      "wave": 4,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "release",
+      "agent": "Release",
+      "dependsOn": [
+        "validate"
+      ],
+      "risk": "high",
+      "wave": 5,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    }
+  ]
+}
