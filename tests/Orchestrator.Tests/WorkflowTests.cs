@@ -88,6 +88,7 @@ public sealed class WorkflowTests : IDisposable
         Assert.True((await store.LoadAsync(context.RunId))!.Scenario.Replay);
         var report = await RunReport.WriteAsync(context, Runs);
         Assert.Contains("Completed", await File.ReadAllTextAsync(report));
+        Assert.Contains("Reported model tokens: 0 (replay mode makes no model calls).", await File.ReadAllTextAsync(report));
         var lines = await File.ReadAllLinesAsync(audit.GetPath(context.RunId));
         Assert.Contains(lines, l => l.Contains("agent_requested") && !l.Contains("\"promptHash\":null"));
         foreach (var line in lines) using (JsonDocument.Parse(line)) { }

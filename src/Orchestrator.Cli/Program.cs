@@ -95,7 +95,7 @@ public static class Program
             var git = new GitWorkspace(workspace, DefaultPolicies.AgentRoots);
             var engine = new RunEngine(store, audit, approvals, versioning: git, humanWait: humanWait);
             var result = saved is null ? await engine.StartAsync(scenario, scenario.Requirement, stages, stop.Token)
-                : await engine.ResumeAsync(saved.RunId, stages, stop.Token);
+                : await engine.ResumeAsync(saved.RunId, stages, stop.Token, command.MaxTokens, Environment.UserName);
             AnsiConsole.WriteLine($"Run {result.RunId}: {result.Status}" + (result.StopReason is null ? "" : $" ({result.StopReason})"));
             AnsiConsole.WriteLine($"Branch: {result.GitBranch}");
             AnsiConsole.WriteLine($"Last good commit: {result.LastGoodCommit}");

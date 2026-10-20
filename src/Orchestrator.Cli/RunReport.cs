@@ -33,7 +33,8 @@ public static class RunReport
         text.AppendLine("\n## Artifacts\n");
         foreach (var id in context.Scenario.Stages.Select(s => s.Id).Where(context.Artifacts.ContainsKey))
             text.AppendLine($"- {id}: SHA-256 `{context.Artifacts[id].ContentHash}`");
-        text.AppendLine($"\nReported model tokens: {context.Budget.TokensUsed} (replay has no model usage).\n\nThis report does not claim deployment; merging the run branch is a human decision.");
+        var tokens = context.Scenario.Replay ? "0 (replay mode makes no model calls)" : context.Budget.TokensUsed.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        text.AppendLine($"\nReported model tokens: {tokens}.\n\nThis report does not claim deployment; merging the run branch is a human decision.");
         var path = Path.Combine(runDirectory, "report.md");
         Directory.CreateDirectory(runDirectory);
         await File.WriteAllTextAsync(path, text.ToString(), ct);

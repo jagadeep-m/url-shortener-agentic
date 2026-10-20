@@ -9,7 +9,7 @@ Roslyn syntax trees of the code as it is now: declarations, references, minimal 
 trusted. Syntax trees need no build and are fast; a semantic model (a full compilation) would
 resolve overloads and namespaces and is the next step if name-based matching proves too coarse.
 
-**Clarification.** Ambiguity is resolved by a person, not inferred. The Clarifier must offer 2–3
+**Clarification.** Ambiguity is resolved by a person, not inferred. The Clarifier must offer 2 to 3
 concrete interpretations per question. The answer sheet is a plain Markdown file a reviewer edits
 in any editor. Answers are parsed strictly (option letters or "Other:") and recorded as Decisions,
 so later artifacts trace back to the answer that justified them. Because the sheet is a reviewed

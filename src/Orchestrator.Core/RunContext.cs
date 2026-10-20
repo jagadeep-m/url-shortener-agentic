@@ -9,7 +9,8 @@ public sealed class RunBudget
 {
     private long tokensUsed;
     public double MaxMinutes { get; set; } = 20;
-    public long MaxTokens { get; set; } = 400_000;
+    // Two rework cycles with whole-source context can need more than 400,000 tokens (a live brownfield run used 431,508).
+    public long MaxTokens { get; set; } = 600_000;
     [YamlIgnore]
     public long TokensUsed { get => Interlocked.Read(ref tokensUsed); set => Interlocked.Exchange(ref tokensUsed, value); }
     public long AddTokens(long count) => Interlocked.Add(ref tokensUsed, count);

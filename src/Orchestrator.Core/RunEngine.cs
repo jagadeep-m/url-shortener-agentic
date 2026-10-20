@@ -44,7 +44,10 @@ public sealed class RunEngine
         return await ExecuteAsync(context, ordered, implementations, false, ct);
     }
 
-    public async Task<RunContext> ResumeAsync(Guid runId, IReadOnlyCollection<IStage> stages, CancellationToken ct = default)
+    // maxTokens lets the person resuming a run change its token budget (a token-budget pause cannot otherwise continue,
+    // because tokens count for the whole run); the change is audited with who made it.
+    public async Task<RunContext> ResumeAsync(Guid runId, IReadOnlyCollection<IStage> stages, CancellationToken ct = default,
+        long? maxTokens = null, string? changedBy = null)
     {
         await using var lease = store.AcquireRunLease(runId);
         var context = await store.LoadAsync(runId, ct) ?? throw new KeyNotFoundException($"Run '{runId}' was not found.");
@@ -53,11 +56,21 @@ public sealed class RunEngine
         ValidateCheckpoint(context, ordered);
         // A completed run resumes only when an accepted artifact was edited since (re-plan); otherwise it is a no-op.
         if (context.Status == RunStatus.Completed && !await HasEditedArtifactsAsync(context, ordered, implementations, ct)) return context;
-        return await ExecuteAsync(context, ordered, implementations, true, ct);
+        BudgetChange? change = null;
+        if (maxTokens is { } limit && limit != context.Budget.MaxTokens)
+        {
+            if (limit <= context.Budget.TokensUsed)
+                throw new ArgumentException($"The token budget must be above the {context.Budget.TokensUsed:N0} tokens this run has already used.");
+            change = new(context.Budget.MaxTokens, limit, changedBy ?? "unknown");
+            context.Budget.MaxTokens = limit;
+        }
+        return await ExecuteAsync(context, ordered, implementations, true, ct, change);
     }
 
+    private sealed record BudgetChange(long From, long To, string By);
+
     private async Task<RunContext> ExecuteAsync(RunContext context, IReadOnlyList<StageDefinition> ordered,
-        IReadOnlyDictionary<string, IStage> stages, bool resume, CancellationToken ct)
+        IReadOnlyDictionary<string, IStage> stages, bool resume, CancellationToken ct, BudgetChange? change = null)
     {
         using var activity = OrchestratorTelemetry.StartRun(context, resume);
         if (versioning is not null) await versioning.BeginAsync(context, ct);
@@ -71,7 +84,7 @@ public sealed class RunEngine
         var watcher = WatchTimeBudgetAsync(session, BudgetWindow(context.Budget), timeBudget, watcherStop.Token);
         try
         {
-            return await RunAsync(context, ordered, stages, resume, session, timeBudget, tokenBudget, stop, ct);
+            return await RunAsync(context, ordered, stages, resume, session, timeBudget, tokenBudget, stop, ct, change);
         }
         finally
         {
@@ -81,10 +94,14 @@ public sealed class RunEngine
     }
 
     private async Task<RunContext> RunAsync(RunContext context, IReadOnlyList<StageDefinition> ordered, IReadOnlyDictionary<string, IStage> stages,
-        bool resume, RunSession session, CancellationTokenSource timeBudget, CancellationTokenSource tokenBudget, CancellationTokenSource stop, CancellationToken ct)
+        bool resume, RunSession session, CancellationTokenSource timeBudget, CancellationTokenSource tokenBudget, CancellationTokenSource stop, CancellationToken ct,
+        BudgetChange? change = null)
     {
         await session.UpdateAsync(c => { c.Status = RunStatus.Running; c.FinishedAtUtc = null; c.StopReason = null; });
         await audit.WriteAsync(context.RunId, resume ? "run_resumed" : "run_started", ct: CancellationToken.None);
+        if (change is not null)
+            await audit.WriteAsync(context.RunId, "token_budget_changed", approver: change.By, ct: CancellationToken.None,
+                message: $"Token budget changed from {change.From:N0} to {change.To:N0} on resume ({context.Budget.TokensUsed:N0} already used).");
         if (context.GitBranch is not null)
             await audit.WriteAsync(context.RunId, "workspace_ready", message: $"{context.GitBranch} @ {context.LastGoodCommit}", ct: CancellationToken.None);
         await WritePlanAsync(context, ordered);

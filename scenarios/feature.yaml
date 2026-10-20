@@ -9,7 +9,7 @@ retry:
   baseSeconds: 2
 budget:
   maxMinutes: 30
-  maxTokens: 400000
+  maxTokens: 600000
 stages:
   - id: requirements
     agent: Requirements

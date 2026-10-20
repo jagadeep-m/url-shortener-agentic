@@ -89,7 +89,7 @@
 
 ## Phase 5
 
-- `maxAttempts` counts total attempts (1–3), so 3 means one try plus two retries. Fallback
+- `maxAttempts` counts total attempts (1 to 3), so 3 means one try plus two retries. Fallback
   attempts come on top: a Coder stage can make up to five attempts in all.
 - Retry and fallback attempts increment `Attempts`, which is cumulative across resumes. Replay
   keys `<stage>.attempt<N>.json` on that number.
@@ -98,7 +98,7 @@
 - The time budget applies to each engine session and counts machine time only; time spent
   waiting for approvals is excluded (changed after the first live run, where a reviewer's reading
   and a re-plan used up 15 of 20 minutes). Resume starts a new time window. The token budget is cumulative; resuming after it
-  is exhausted needs a higher saved budget.
+  is exhausted needs a higher budget, which `resume --max-tokens <n>` sets (audited).
 - Rollback is scoped to agent paths and uses the run branch's HEAD as the last good commit.
   The repository needs at least one commit; agent paths must be clean and nothing may be
   staged when a run starts or resumes. Do not edit agent paths while a run is active.
@@ -211,8 +211,8 @@
   exist yet). Very large files and context beyond the overall cap are listed as omitted rather than
   silently truncated.
 - Context and the token budget interact: file contents are input tokens and count towards
-  `maxTokens`. `feature.yaml` keeps the default 400,000-token budget, which with a small model costs
-  only cents, rather than a lower cap that file context could exhaust.
+  `maxTokens`. The scenarios use a 600,000-token budget, which with a small model costs only cents,
+  rather than a lower cap that file context could exhaust.
 - The model name comes from `LLM:Model` at the start of a run and is kept with the run, so a resume
   reports the model the run started with.
 - Live mode has run against a real model: the ambiguous scenario with `gpt-6-luna` (sample run
@@ -304,3 +304,11 @@
   rework fixed it (106 tests passing), the review passed and the release was approved. One review
   was cut off at the Reviewer's 4,096-token output limit and retried; reviews now list every gap,
   so the limit is 8,192 tokens.
+- The first live brownfield run (`0ce75786…`, the per-link click limit) did everything right: impact
+  analysis, design, a real EF Core migration with its approval, code, tests and docs, then two
+  rework cycles for real review findings. Its third review would have passed 431,508 tokens, over the
+  400,000-token budget, so the run paused safely; but a plain `resume` could not continue it, because
+  tokens count for the whole run. Two changes: the scenarios' budget is now 600,000 tokens (two rework
+  cycles with whole-source context need more), and `resume <runId> --max-tokens <n>` lets the person
+  resuming raise it, audited as `token_budget_changed` with their name. Resuming that run with
+  `--max-tokens 800000` completed it: the review passed with 107 tests, at 470,935 tokens.

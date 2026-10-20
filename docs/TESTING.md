@@ -5,7 +5,7 @@ dotnet build
 dotnet test
 ```
 
-249 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
+250 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
 SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
 Requires the .NET 8 runtimes (see the README).
 
@@ -17,6 +17,7 @@ Requires the .NET 8 runtimes (see the README).
 | Integration | UrlShortener.IntegrationTests; engine tests on real SQLite and git | ~55 | Real EF Core migrations, SQL behaviour, HTTP pipeline via `WebApplicationFactory`; orchestrator state, audit and rollback on real files and repositories |
 | Scenario (replay) | WorkflowTests, ScenarioReplayTests, GuardrailTests | ~20 | Whole runs through the real engine, agents, policies and stages, using recorded model output |
 | End-to-end (manual / CI) | `dotnet run --project src/Orchestrator.Cli -- run scenarios/<name>.yaml --replay` | 3 scenarios | The CLI with real git branches and the real `dotnet build` / `dotnet test` gates. Committed results are in `runs/` |
+| Live (manual) | `run scenarios/greenfield.yaml` or `brownfield.yaml` with `--requirement "..."` and a real model | 18 runs | The whole system against a real model's unpredictable output; each failure became a fix with tests. Results and the fix each led to are in [SAMPLE_RUNS.md](SAMPLE_RUNS.md) |
 
 ## What each project covers
 
@@ -28,9 +29,9 @@ Requires the .NET 8 runtimes (see the README).
 
 **UrlShortener.IntegrationTests (41)**
 - ApiTests (`WebApplicationFactory`, a temporary SQLite file per class):
-  - create and details; duplicate alias → 409
-  - invalid URLs → 400 (`javascript:`, `data:`, own host, over 2,048 characters, malformed JSON)
-  - redirect → 302, unknown → 404, expired → 410, delete then redirect → 410
+  - create and details; a duplicate alias returns 409
+  - invalid URLs return 400 (`javascript:`, `data:`, own host, over 2,048 characters, malformed JSON)
+  - a redirect returns 302, an unknown code 404, an expired link 410, and a deleted link 410
   - stats after 3 clicks (per day, top referrers, hashed IP)
   - idempotent POST, including across concurrency and restarts
   - Swagger, health checks, and no automatic migration in Production
@@ -42,12 +43,12 @@ Requires the .NET 8 runtimes (see the README).
 - RateLimitTests: per-IP 429 with `Retry-After`
 - ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
 
-**Orchestrator.Tests (165)**
+**Orchestrator.Tests (166)**
 
 | Class | Covers |
 | --- | --- |
 | ScenarioTests | strict YAML, topological order, cycle and unknown-dependency errors, budget/retry validation, artifact hashing |
-| RunEngineTests | entry gate blocks, exit failure publishes nothing, approvals, checkpoints and resume across new instances, cancellation, lineage validation, run leases, stale-write protection, one audit line per event |
+| RunEngineTests | a token-budget pause continues only after an audited `--max-tokens` raise above the tokens used; entry gate blocks, exit failure publishes nothing, approvals, checkpoints and resume across new instances, cancellation, lineage validation, run leases, stale-write protection, one audit line per event |
 | ResilienceTests | barrier-proven parallel waves with overlapping timestamps and a join; bounded retries carrying the failure reason; a write in another role's folders retried once with the denial as feedback, while a second one or any other denial stops the stage; fallback order; token- and time-budget safe-stop; rollback on a real git repository |
 | GitWorkspaceTests | branch per run, commits scoped to agent paths, revert of modified and new files, refusal of dirty, staged or empty repositories |
 | AgentTests | every role's structured output and parent decisions; replay selection (variant, attempt, base); retry feedback in prompts; templates; boundary and symlink escapes; build/test output parsing |
@@ -56,7 +57,7 @@ Requires the .NET 8 runtimes (see the README).
 | WorkflowTests | greenfield replay end to end with real policies; Tester retry; editing design re-runs only downstream stages; resume after an edit; console approval paths |
 | MetricsTests | success rate, retry rate, MTTR, human wait, machine time and per-stage latency from a hand-written audit log; aggregates; live Meter instruments; report and lineage rendering |
 | CodebaseIndexTests | Roslyn endpoints with group prefixes, table mappings, affected files/endpoints/tables/tests, unknown seeds; indexes the real solution |
-| OpenQuestionsTests | answer normalisation, canonical round-trip, the 2–3 interpretation rule |
+| OpenQuestionsTests | answer normalisation, canonical round-trip, the 2 to 3 interpretation rule |
 | ReviewTests | verdict and recommendation parsing (including markdown bold); missing lines rejected; the `verdict` field completes a review without the line (the line wins when both exist); a schema error names the missing fields; a re-review receives its earlier findings; `[NOT READY]` leads the release summary; a FAIL review reworks the implementation with the findings and reviews again; rework is bounded and a review that keeps failing fails the run; reworked stages run one at a time in scenario order while the first pass stays parallel |
 | HumanWaitTests | overlapping approval waits counted once; a long approval no longer exhausts the time budget, while the same wait without the clock still does |
 | LiveModeTests | files found by type name when no path is given; a code stage returning no files fails with the model's explanation; the Tester sees the API contract; `--requirement` parsing and its refusal with `--replay`; `feature.yaml` graph; code context (only named, existing product files; no traversal or build output; size and budget caps; absolute paths redacted; outline content); what each role is shown; the provider client against a fake server (reply, usage, served model, request shape, 401/404/429 explanations with the provider's message, cut-off answers); fenced JSON; the model named in the report |
@@ -94,7 +95,7 @@ dotnet test --collect "Code Coverage;Format=cobertura" --results-directory ./Tes
 ```
 
 Line and branch coverage of the solution's assemblies, excluding EF-generated migration code
-(measured on 2026-10-19):
+(measured on 2026-10-20):
 
 | Assembly | Line | Branch |
 | --- | --- | --- |
@@ -102,18 +103,19 @@ Line and branch coverage of the solution's assemblies, excluding EF-generated mi
 | UrlShortener.Application | 100.0% (71/71) | 100.0% |
 | UrlShortener.Infrastructure | 96.9% (154/159) | 85.3% |
 | UrlShortener.Api | 97.4% (189/194) | 84.4% |
-| Orchestrator.Core | 98.0% (950/969) | 90.0% |
-| Orchestrator.Agents | 92.3% (693/751) | 82.6% |
+| Orchestrator.Core | 98.0% (1,041/1,062) | 89.9% |
+| Orchestrator.Agents | 93.4% (841/900) | 84.2% |
 | Orchestrator.Policies | 75.5% (111/147) | 81.9% |
-| Orchestrator.Cli | 50.4% (132/262) | 48.0% |
-| **Total** | **90.4% (2,375/2,628)** | **82.7%** |
+| Orchestrator.Cli | 50.4% (133/264) | 48.5% |
+| **Total** | **91.1% (2,615/2,872)** | **83.6%** |
 
 Known gaps:
 - `Orchestrator.Cli` `Main` (argument parsing, wiring, stop polling) is exercised by the
   end-to-end runs, not unit tests.
 - The vulnerability scanner's process path (it restores a probe project and needs network) is
   covered only through its JSON parser and a fake.
-- The live `OpenAiCompatibleChatClient` HTTP path is not tested, because that needs a key.
+- The live `OpenAiCompatibleChatClient` is tested against a fake HTTP server; the real provider is
+  exercised only by the live runs in `runs/`, because that needs a key and costs money.
 
 ## Flakiness controls
 

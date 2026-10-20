@@ -17,7 +17,7 @@ flowchart TB
     subgraph CLI[Orchestrator.Cli]
         C[run / resume / report / stop] --- A[ConsoleApprovalService]
     end
-    subgraph CORE[Orchestrator.Core — the only control point]
+    subgraph CORE[Orchestrator.Core: the only control point]
         E[RunEngine: waves, budget, safe-stop, re-plan]
         X[StageExecutor: gates, approvals, retries, fallback, landing]
         S[(SqliteRunStateStore runs/orchestrator.db)]
@@ -64,15 +64,15 @@ makes the autonomy "controlled".
 ## 2. Orchestration model
 
 A **scenario** (`scenarios/*.yaml`) names the requirement, the stages (`id`, `agent`, `dependsOn`,
-`risk`, optional `retry`/`budget`), a retry policy (1–3 attempts, exponential backoff) and a run
+`risk`, optional `retry`/`budget`), a retry policy (1 to 3 attempts, exponential backoff) and a run
 budget (minutes, tokens). The loader is strict: unknown or duplicate keys, cycles, unknown
 dependencies and bad budgets are rejected before anything runs.
 
 | Scenario | Graph |
 | --- | --- |
-| greenfield | requirements → design → {implement ‖ tests ‖ docs} → validate → release |
-| brownfield | requirements → impact → design → {implement ‖ docs}; implement → tests; → validate → release |
-| ambiguous | clarify → requirements → design → docs → validate → release |
+| greenfield | requirements, design, then implement, tests and docs in parallel, then validate, release |
+| brownfield | requirements, impact, design, then implement and docs in parallel, tests after implement, then validate, release |
+| ambiguous | clarify, requirements, design, docs, validate, release |
 | feature (live only) | the brownfield graph, with the requirement given on the command line (`--requirement "..."`) |
 
 **Scheduling.** The engine runs in waves: every stage whose dependencies are complete starts at
@@ -166,7 +166,7 @@ flowchart TD
    - mark their downstream stages stale and regenerate them; keep everything else (ADR 0007)
 
    Then run the next wave. Stop at the first wave with a failed or blocked stage.
-5. Finish: write `report.md` and `diff.patch` (base commit → branch tip), and record metrics.
+5. Finish: write `report.md` and `diff.patch` (from the base commit to the branch tip), and record metrics.
    A stop pauses instead: running stages become Interrupted, and the checkpoint keeps the reason.
 
 ## 5. Governance
@@ -174,10 +174,10 @@ flowchart TD
 | Needs a human | Mechanism |
 | --- | --- |
 | High-risk stages (requirements, impact, design, release; clarify) | approval before execution, or review of the draft (approve / reject / edit) |
-| New EF Core migrations | MigrationApproval policy → RequireApproval |
-| New or changed NuGet packages | NuGetAllowlist (allowlisted → approval, otherwise deny); VulnerablePackages (unknown → approval, vulnerable → deny) |
-| Diffs over 400 changed lines | DiffSize (over 2,000 → deny) |
-| Build/config files, suspicious secret-looking values | PathAllowlist, SecretScan → RequireApproval |
+| New EF Core migrations | MigrationApproval policy requires approval |
+| New or changed NuGet packages | NuGetAllowlist (allowlisted packages need approval, others are denied); VulnerablePackages (unknown status needs approval, vulnerable is denied) |
+| Diffs over 400 changed lines | DiffSize (over 2,000 lines is denied) |
+| Build/config files, suspicious secret-looking values | PathAllowlist and SecretScan require approval |
 | Ambiguous requirements | open-questions.md must be answered before any design |
 | Release | Release stage is High risk; merging the run branch stays a manual step |
 
@@ -195,8 +195,10 @@ stops the stage without retrying (ADR 0006), except one correction for a file in
 `HumanWaitClock` times every approval (stage reviews and file-policy approvals alike, through
 `HumanWaitApprovalService`), and a watcher compares elapsed time minus human waits with the budget.
 Reading, editing and answering never use it up. The token budget is cumulative and charged from
-model usage. Exceeding either pauses the run cleanly (`run_paused`,
-`budget_exceeded`). `--auto-approve` is refused unless `CI=true`.
+model usage (default 600,000 per run). Exceeding either pauses the run cleanly (`run_paused`,
+`budget_exceeded`). Because tokens count for the whole run, `resume <runId> --max-tokens <n>` lets
+the person resuming raise the token budget; the change is audited (`token_budget_changed`, with
+their name). `--auto-approve` is refused unless `CI=true`.
 
 ## 6. Observability: audit, lineage, metrics
 
@@ -227,7 +229,7 @@ model usage. Exceeding either pauses the run cleanly (`run_paused`,
   grounds them in a Roslyn syntax-tree index of the current code and computes the affected files,
   endpoints (`Map*` calls with `MapGroup` prefixes), EF tables and tests. Unknown seeds are listed
   separately (ADR 0008).
-- **Clarification (ambiguous).** The Clarifier writes `open-questions.md` with 2–3
+- **Clarification (ambiguous).** The Clarifier writes `open-questions.md` with 2 to 3
   interpretations per question. The run pauses until every `Answer:` line is filled in, each
   answer becomes a decision, and changing an answer later re-plans downstream stages.
 - **Replay.** `ReplayChatClient` serves `scenarios/recordings/<scenario>/<stage>.json`:
@@ -272,10 +274,10 @@ wrapped in markdown fences. The model name is recorded in `plan.json`, the audit
 
 ## 8. URL shortener
 
-Clean Architecture: Domain ← Application ← Infrastructure, Api. Domain references nothing.
+Clean Architecture: Application depends on Domain, and Infrastructure and Api depend on Application. Domain references nothing.
 
 - **Domain.**
-  - `ShortLink` enforces code rules (3–30 of `[A-Za-z0-9_-]`, reserved `api`/`health`/`swagger`),
+  - `ShortLink` enforces code rules (3 to 30 of `[A-Za-z0-9_-]`, reserved `api`/`health`/`swagger`),
     absolute HTTP(S) targets up to 2,048 characters, expiry after creation, and UTC timestamps
   - `ClickEvent` accepts only a SHA-256 IP digest
   - `Base62CodeGenerator` draws seven characters with unbiased `RandomNumberGenerator.GetInt32`

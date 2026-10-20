@@ -44,6 +44,12 @@ public sealed class LiveModeTests : IDisposable
         Assert.Contains("only once", Assert.Throws<ArgumentException>(() => CommandLine.Parse(["run", "s.yaml", "--requirement", "a", "--requirement", "b"])).Message);
         Assert.Contains("Unknown option '--lineage'", Assert.Throws<ArgumentException>(() => CommandLine.Parse(["run", "s.yaml", "--lineage"])).Message);
         Assert.Throws<ArgumentException>(() => CommandLine.Parse(["deploy", "x"]));
+        Assert.Equal(800_000, CommandLine.Parse(["resume", Guid.NewGuid().ToString(), "--max-tokens", "800000"]).MaxTokens);
+        Assert.Null(CommandLine.Parse(["resume", Guid.NewGuid().ToString()]).MaxTokens);
+        foreach (var bad in new[] { "0", "-5", "1e6", "800,000", "20000000" })
+            Assert.Contains("--max-tokens needs a whole number", Assert.Throws<ArgumentException>(() => CommandLine.Parse(["resume", "id", "--max-tokens", bad])).Message);
+        Assert.Contains("only once", Assert.Throws<ArgumentException>(() => CommandLine.Parse(["resume", "id", "--max-tokens", "1", "--max-tokens", "2"])).Message);
+        Assert.Contains("Unknown option '--max-tokens'", Assert.Throws<ArgumentException>(() => CommandLine.Parse(["run", "s.yaml", "--max-tokens", "1"])).Message);
     }
 
     [Fact]
@@ -53,7 +59,7 @@ public sealed class LiveModeTests : IDisposable
         Assert.Equal("", scenario.Requirement);
         Assert.Equal(new[] { "requirements", "impact", "design", "implement", "docs", "tests", "validate", "release" }, DagBuilder.Build(scenario).Select(s => s.Id));
         Assert.Equal(["implement"], scenario.Stages.Single(s => s.Id == "tests").DependsOn);
-        Assert.Equal(400_000, scenario.Budget.MaxTokens);
+        Assert.Equal(600_000, scenario.Budget.MaxTokens);
     }
 
     // ---- Read-only code context
@@ -255,7 +261,10 @@ public sealed class LiveModeTests : IDisposable
         var context = new RunContext { Scenario = new() { Name = "feature", Model = "gpt-6-luna", Stages = [] } };
         Directory.CreateDirectory(Path.Combine(runs, context.RunId.ToString("D")));
         await File.WriteAllTextAsync(Path.Combine(runs, context.RunId.ToString("D"), "audit.jsonl"), "");
-        Assert.Contains("Mode: Live (model gpt-6-luna)", await File.ReadAllTextAsync(await RunReport.WriteAsync(context, runs)));
+        context.Budget.AddTokens(203131);
+        var report = await File.ReadAllTextAsync(await RunReport.WriteAsync(context, runs));
+        Assert.Contains("Mode: Live (model gpt-6-luna)", report);
+        Assert.Contains("Reported model tokens: 203,131.", report); // live reports no longer say "replay has no model usage"
     }
 
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }

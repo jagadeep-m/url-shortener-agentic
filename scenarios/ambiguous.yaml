@@ -6,7 +6,7 @@ retry:
   baseSeconds: 2
 budget:
   maxMinutes: 20
-  maxTokens: 400000
+  maxTokens: 600000
 stages:
   # The Requirements role in clarification mode: writes open-questions.md and pauses for answers.
   - id: clarify

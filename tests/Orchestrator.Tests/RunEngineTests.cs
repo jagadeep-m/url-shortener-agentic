@@ -234,6 +234,39 @@ public sealed class RunEngineTests : IDisposable
         Assert.Equal(RunStatus.Completed, (await execution).Status);
     }
 
+    // A live brownfield run paused at 431,508 of 400,000 tokens; since tokens count for the whole run, a plain resume
+    // paused again. The person resuming can now raise the budget, and the change is audited with their name.
+    [Fact]
+    public async Task A_token_budget_pause_continues_only_after_an_audited_budget_raise()
+    {
+        var calls = 0;
+        var stage = new Stage("review") { Body = (ctx, _) =>
+        {
+            if (++calls == 1)
+            {
+                ctx.Budget.AddTokens(150);
+                throw new BudgetExceededException("Run token budget exceeded (150/100) by the Reviewer call.");
+            }
+            return Task.FromResult(new StageOutput(new Artifact("review.md", "PASS")));
+        } };
+        var plan = Plan(stage);
+        plan.Budget = new() { MaxTokens = 100 };
+        var paused = await Engine().StartAsync(plan, "Build", [stage]);
+        Assert.Equal(RunStatus.Paused, paused.Status);
+
+        Assert.Equal(RunStatus.Paused, (await Engine().ResumeAsync(paused.RunId, [stage])).Status); // the same budget stops again
+        var tooLow = await Assert.ThrowsAsync<ArgumentException>(() => Engine().ResumeAsync(paused.RunId, [stage], maxTokens: 150, changedBy: "alice"));
+        Assert.Equal("The token budget must be above the 150 tokens this run has already used.", tooLow.Message);
+
+        var resumed = await Engine().ResumeAsync(paused.RunId, [stage], maxTokens: 1000, changedBy: "alice");
+        Assert.Equal(RunStatus.Completed, resumed.Status);
+        Assert.Equal(1000, (await store.LoadAsync(paused.RunId))!.Budget.MaxTokens);
+        var change = (await File.ReadAllLinesAsync(audit.GetPath(paused.RunId))).Select(l => JsonDocument.Parse(l).RootElement)
+            .Single(e => e.GetProperty("event").GetString() == "token_budget_changed");
+        Assert.Equal("alice", change.GetProperty("approver").GetString());
+        Assert.Equal("Token budget changed from 100 to 1,000 on resume (150 already used).", change.GetProperty("message").GetString());
+    }
+
     [Fact]
     public async Task StaleSnapshotCannotOverwriteNewerState()
     {
