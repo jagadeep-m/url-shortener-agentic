@@ -80,9 +80,11 @@ public sealed class WorkflowTests : IDisposable
         Assert.True(File.Exists(Path.Combine(root, "src/UrlShortener.Domain/Base62CodeGenerator.cs")));
         Assert.True(File.Exists(Path.Combine(root, "tests/UrlShortener.UnitTests/DomainTests.cs")));
         Assert.True(File.Exists(Path.Combine(root, "docs/generated/greenfield.md")));
-        Assert.Equal(new[] { "implement", "tests", "validate" }, validation.Stages.Order());
+        // validate runs the suite twice: before the review (fresh evidence) and at its exit gate.
+        Assert.Equal(new[] { "implement", "tests", "validate", "validate" }, validation.Stages.Order());
         Assert.Contains("tests.attempt1", validation.Logs);
-        Assert.Equal(3, validation.Calls); // implement and tests change C# files; validate always builds and tests
+        Assert.Equal(4, validation.Calls); // implement and tests change C# files; validate builds and tests before the review and at its gate
+        Assert.Contains("validate.attempt1.before-review", validation.Logs);
         Assert.True((await store.LoadAsync(context.RunId))!.Scenario.Replay);
         var report = await RunReport.WriteAsync(context, Runs);
         Assert.Contains("Completed", await File.ReadAllTextAsync(report));

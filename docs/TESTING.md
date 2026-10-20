@@ -5,7 +5,7 @@ dotnet build
 dotnet test
 ```
 
-242 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
+244 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
 SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
 Requires the .NET 8 runtimes (see the README).
 
@@ -42,7 +42,7 @@ Requires the .NET 8 runtimes (see the README).
 - RateLimitTests: per-IP 429 with `Retry-After`
 - ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
 
-**Orchestrator.Tests (158)**
+**Orchestrator.Tests (160)**
 
 | Class | Covers |
 | --- | --- |
@@ -60,7 +60,7 @@ Requires the .NET 8 runtimes (see the README).
 | ReviewTests | verdict and recommendation parsing (including markdown bold); missing lines rejected; `[NOT READY]` leads the release summary; a FAIL review reworks the implementation with the findings and reviews again; rework is bounded and a review that keeps failing fails the run |
 | HumanWaitTests | overlapping approval waits counted once; a long approval no longer exhausts the time budget, while the same wait without the clock still does |
 | LiveModeTests | files found by type name when no path is given; a code stage returning no files fails with the model's explanation; the Tester sees the API contract; `--requirement` parsing and its refusal with `--replay`; `feature.yaml` graph; code context (only named, existing product files; no traversal or build output; size and budget caps; absolute paths redacted; outline content); what each role is shown; the provider client against a fake server (reply, usage, served model, request shape, 401/404/429 explanations with the provider's message, cut-off answers); fenced JSON; the model named in the report |
-| RedTestsTests | code roles see the whole product source after the named files, without tests or migrations; failure details carry test names, arguments and assertion messages; only failures confined to new test classes may land red; the Tester gate tolerates only classes in new files; a failing full run at validation requests rework with the details; other code stages are still retried; files a stage lands are recorded for the run (not failed attempts); the Reviewer sees every file the run changed first, including earlier-round tests, while writing roles do not |
+| RedTestsTests | code roles see the whole product source after the named files, without tests or migrations; failure details carry test names, arguments and assertion messages; only failures confined to new test classes may land red; the Tester gate tolerates only classes in new files; a failing full run at validation requests rework with the details; other code stages are still retried; files a stage lands are recorded for the run (not failed attempts); the Reviewer sees every file the run changed first, including earlier-round tests and docs, while writing roles do not; a failing run before the review reworks without a model call; the review prompt carries the current run over older gate notes |
 | ScenarioReplayTests | brownfield on real git (impact report, migration approval twice, rollback, `diff.patch`); ambiguous (answers as decisions, mid-run answer change re-plans, unanswered questions block) |
 
 Every orchestrator mechanism (gates, approvals, retries, fallback, rollback, safe-stop,

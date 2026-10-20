@@ -260,3 +260,10 @@
   its boundary denies. The design and Coder prompts now assign each folder to one role, and such a
   denial is retried once with feedback instead of failing the run (ADR 0011). Writes outside the
   agent paths, secrets and packages still stop at once.
+- The sixth live greenfield run (`08733518…`) produced working, tested code (100 tests passing) but
+  failed on two false review findings. The first review read the tests gate's "5 new tests fail
+  (red)" note, written before the Coder fixed them, and asked for that fix again. The second called
+  `docs/features/url-normalization.md` missing because the Reviewer could not read `docs/`. Now the
+  validate stage runs the full suite before the review and gives the Reviewer that result as current
+  (a failing run reworks without a model call), and the Reviewer can read the docs the run changed.
+  The cost is one extra build and test run per review, accepted for evidence the Reviewer can trust.

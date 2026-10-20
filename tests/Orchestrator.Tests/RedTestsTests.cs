@@ -20,6 +20,7 @@ public sealed class RedTestsTests : IDisposable
         Write("src/UrlShortener.Domain/ShortLink.cs", "class ShortLink { }");
         Write("src/UrlShortener.Infrastructure/Migrations/20261017_InitialCreate.cs", "class InitialCreate { }");
         Write("tests/UrlShortener.UnitTests/ExistingTests.cs", "class ExistingTests { }");
+        Write("docs/features/url-normalization.md", "# URL normalization");
     }
 
     private void Write(string path, string content)
@@ -173,11 +174,15 @@ public sealed class RedTestsTests : IDisposable
     {
         public string Instructions = "";
         public string[] Shown = [];
+        public string Prompt = "";
+        public int Calls;
         public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             var list = messages.ToList();
+            Calls++;
             Instructions = list[0].Text;
             using var user = System.Text.Json.JsonDocument.Parse(list[1].Text);
+            Prompt = user.RootElement.GetProperty("prompt").GetString()!;
             Shown = user.RootElement.GetProperty("currentFiles").EnumerateArray().Select(f => f.GetProperty("path").GetString()!).ToArray();
             return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, text)));
         }
@@ -191,17 +196,54 @@ public sealed class RedTestsTests : IDisposable
         ctx.ChangedFiles["tests/UrlShortener.UnitTests/ExistingTests.cs"] = "tests";            // written in the first round
         ctx.ChangedFiles["src/UrlShortener.Application/Links/LinkService.cs"] = "implement";
         ctx.ChangedFiles["tests/UrlShortener.UnitTests/RolledBackTests.cs"] = "tests";         // no longer on disk: skipped
+        ctx.ChangedFiles["docs/features/url-normalization.md"] = "docs";                       // a live review missed this file
 
         var reviewer = new Reply("""{"summary":"s","rationale":"r","content":"Verdict: PASS","files":[]}""");
         Assert.True((await new ReviewerAgent(reviewer) { Code = new CodeContext(root) }.RunAsync(new("validate", "", []), ctx, default)).Success);
-        Assert.Equal(new[] { "src/UrlShortener.Application/Links/LinkService.cs", "tests/UrlShortener.UnitTests/ExistingTests.cs", "src/UrlShortener.Domain/ShortLink.cs" }, reviewer.Shown);
-        Assert.Contains("including tests from earlier rounds", reviewer.Instructions);
+        Assert.Equal(new[] { "docs/features/url-normalization.md", "src/UrlShortener.Application/Links/LinkService.cs", "tests/UrlShortener.UnitTests/ExistingTests.cs",
+            "src/UrlShortener.Domain/ShortLink.cs" }, reviewer.Shown);
+        Assert.Contains("including tests and docs from earlier rounds", reviewer.Instructions);
 
         // Writing roles still see the product source only; the run's test files are the Reviewer's view.
         var coder = new Reply("""{"summary":"s","rationale":"r","content":"c","files":[{"path":"src/UrlShortener.Domain/X.cs","content":"class X { }"}]}""");
         await new CoderAgent(coder) { Code = new CodeContext(root) }.RunAsync(new("implement", "", []), ctx, default);
         Assert.DoesNotContain("tests/UrlShortener.UnitTests/ExistingTests.cs", coder.Shown);
+        Assert.DoesNotContain("docs/features/url-normalization.md", coder.Shown);
     }
 
-    public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    // ---- The Reviewer works from a fresh build and test run
+
+    private AgentStage ReviewStage(IAgent reviewer, Capture validation, out RunContext ctx)
+    {
+        activity = OrchestratorTelemetry.Source.StartActivity("red-tests-review");
+        var runs = Path.Combine(root, "runs");
+        var definition = new StageDefinition { Id = "validate", Agent = "Reviewer" };
+        ctx = new RunContext { Scenario = new() { Stages = [definition] } };
+        ctx.StageStatuses["validate"] = new() { Attempts = 1 };
+        return new AgentStage(definition, reviewer, new FileChangeService(root, [new AllowAllPolicy()], new Approvals()), runs, validation, new JsonlAuditWriter(runs));
+    }
+
+    [Fact]
+    public async Task A_failing_run_before_the_review_requests_rework_without_asking_the_model()
+    {
+        var stage = ReviewStage(new ReviewerAgent(new NoModel()), new Capture(GateResult.Block("dotnet test failed: 90 passed, 3 failed")), out var ctx);
+        var rework = await Assert.ThrowsAsync<ReworkRequestedException>(() => stage.ExecuteAsync(ctx, default)); // NoModel throws if it is called
+        Assert.Equal("The full build and test run failed at validation: dotnet test failed: 90 passed, 3 failed", rework.Findings);
+    }
+
+    [Fact]
+    public async Task The_review_prompt_carries_the_current_run_over_older_gate_notes()
+    {
+        // A live review read the tests gate's "5 new tests fail (red)" note after the Coder had fixed them and asked for that fix again.
+        var reviewer = new Reply("""{"summary":"s","rationale":"r","content":"Verdict: PASS","files":[]}""");
+        var stage = ReviewStage(new ReviewerAgent(reviewer) { Code = new CodeContext(root) }, new Capture(GateResult.Pass("dotnet build succeeded; dotnet test: 93 passed, 0 failed, 0 skipped.")), out var ctx);
+        await stage.ExecuteAsync(ctx, default);
+        Assert.Equal(1, reviewer.Calls);
+        Assert.Contains("Full build and test run of the current code, just before this review: dotnet build succeeded; dotnet test: 93 passed, 0 failed, 0 skipped.", reviewer.Prompt);
+        Assert.Contains("where they differ, this run is current", reviewer.Prompt);
+    }
+
+    private System.Diagnostics.Activity? activity;
+
+    public void Dispose() { activity?.Dispose(); if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
 }

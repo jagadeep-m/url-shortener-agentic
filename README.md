@@ -189,7 +189,7 @@ dotnet run --project src/Orchestrator.Cli -- run scenarios/feature.yaml --requir
 dotnet test
 ```
 
-242 tests across three projects (Orchestrator.Tests, UrlShortener.UnitTests,
+244 tests across three projects (Orchestrator.Tests, UrlShortener.UnitTests,
 UrlShortener.IntegrationTests). They use temporary SQLite files and git repositories and need no
 network. For coverage (no extra tools; the collector ships with the test SDK):
 

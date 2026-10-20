@@ -59,16 +59,29 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
 
     private async Task<StageOutput> RunAgentAsync(RunContext ctx, bool simplified, CancellationToken ct)
     {
-        var task = CreateTask(ctx, simplified);
+        var task = CreateTask(ctx, simplified, agent.Role == "Reviewer" ? await ValidateBeforeReviewAsync(ctx, ct) : null);
         await audit.WriteAsync(ctx.RunId, "agent_requested", definition, message: agent.Role + (ctx.Scenario.Model is { } model ? $" via {model}" : "") + (simplified ? " (simplified prompt)" : ""), ct: ct,
             promptHash: Artifact.Hash(JsonSerializer.Serialize(task, AgentDocument.Json)));
         return await SaveDraftAsync(ctx, await agent.RunAsync(task, ctx, ct), ct);
     }
 
-    private AgentTask CreateTask(RunContext ctx, bool simplified)
+    // The Reviewer judges the code as it is now: the full build and test run happens before the model is asked, so
+    // the review never relies on earlier gate notes (a live review once asked to fix "red" tests that already passed).
+    // A failing run sends the work back at once, without a model call.
+    private async Task<string> ValidateBeforeReviewAsync(RunContext ctx, CancellationToken ct)
+    {
+        var result = await validation.ValidateAsync(DirectoryFor(ctx), $"{Id}.attempt{Math.Max(1, ctx.StageStatuses[Id].Attempts)}.before-review", ct);
+        if (!result.Passed) throw new ReworkRequestedException($"The full build and test run failed at validation: {result.Reason}");
+        return result.Reason;
+    }
+
+    private AgentTask CreateTask(RunContext ctx, bool simplified, string? currentRun = null)
     {
         var state = ctx.StageStatuses[Id];
         var prompt = $"Execute stage '{Id}' as {agent.Role}. Host gate evidence: " + string.Join("; ", DependsOn.Select(id => id + ": " + ctx.StageStatuses[id].Reason));
+        if (currentRun is not null)
+            prompt += $"\nFull build and test run of the current code, just before this review: {currentRun}. "
+                + "The gate evidence above was recorded when each stage landed and may predate later changes; where they differ, this run is current.";
         if (state.LastFailure is { } failure) prompt += $"\nThe previous attempt failed. Fix this failure: {failure}";
         if (state.ReplanReason is { } replan) prompt += $"\nRe-plan: {replan}. Regenerate this stage from the current inputs.";
         return new AgentTask(Id, prompt, DependsOn.Select(id => ctx.Artifacts[id]).ToArray(), Math.Max(1, state.Attempts), simplified);
@@ -107,6 +120,7 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
         var changesCode = document.Files.Any(f => f.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || f.Path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
         if (changesCode || agent.Role == "Reviewer")
         {
+            // For the Reviewer this repeats the run made before the review: the gate checks what is actually landed.
             var result = await validation.ValidateAsync(DirectoryFor(ctx), $"{Id}.attempt{ctx.StageStatuses[Id].Attempts}", newTestClasses, ct);
             if (!result.Passed && agent.Role == "Reviewer")
                 throw new ReworkRequestedException($"The full build and test run failed at validation: {result.Reason}");

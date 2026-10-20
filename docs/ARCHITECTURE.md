@@ -132,7 +132,9 @@ flowchart TD
 - **Red tests and validation rework:** new tests describe the requirement, so they may fail against
   code that does not meet it yet. At the tests gate, failures confined to test classes in files the
   Tester created may land "red" if the build and every existing test pass; anything else is retried
-  as before. The validate gate runs the full build and test suite; if it fails, the engine reworks
+  as before. The validate stage runs the full build and test suite before the Reviewer is asked, and
+  gives the result to the Reviewer as the current state (earlier gate notes, such as "new tests are
+  red", may predate later changes). It runs again at the exit gate. If either run fails, the engine reworks
   implement, tests and docs (the same one rework cycle as a FAIL review) with the failing tests and
   their assertion messages as feedback, instead of blaming the tests. Gate reasons include the first
   failing tests with their messages.
@@ -244,8 +246,9 @@ scenarios). A real model cannot change code it has never seen, so every agent sh
 
   Given to the Architect, Coder, Tester, Docs and Reviewer, until the size budget runs out. The
   Reviewer first gets every file the run has landed so far (`RunContext.ChangedFiles`, persisted
-  with the run), including test files, so a test written in an earlier round still counts after a
-  rework whose artifacts no longer name it.
+  with the run), including test and docs files, so work from an earlier round still counts after a
+  rework whose artifacts no longer name it. `docs/` is readable only when a file is asked for by name;
+  it is never part of the outline or the whole-source view.
 
 The Coder and Tester must return at least one file. An empty answer fails the attempt, with the
 model's own explanation as retry feedback, instead of passing the gate with nothing done.

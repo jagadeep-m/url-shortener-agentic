@@ -13,6 +13,9 @@ public sealed partial class CodeContext(string workspace, IReadOnlyList<string>?
 {
     private readonly string root = Path.GetFullPath(workspace).TrimEnd(Path.DirectorySeparatorChar);
     private readonly IReadOnlyList<string> productRoots = roots ?? ["src/UrlShortener.*", "tests/UrlShortener.*"];
+    // docs/ is readable too (the Docs agent writes there), but only when a file is asked for by name, for example
+    // the Reviewer's list of files the run changed; it is never part of the outline or the whole-source view.
+    private IEnumerable<string> ReadableRoots => productRoots.Append("docs");
 
     [GeneratedRegex(@"(?:src|tests)/UrlShortener\.[A-Za-z]+/[A-Za-z0-9_./-]+\.(?:cs|csproj|json)")]
     private static partial Regex ProductPath();
@@ -53,7 +56,7 @@ public sealed partial class CodeContext(string workspace, IReadOnlyList<string>?
 
     public string Redact(string text) => text.Replace(root, "<workspace>", StringComparison.Ordinal);
 
-    // Only normalised product paths: no traversal, no build output.
+    // Only normalised product or docs paths: no traversal, no build output.
     private bool IsReadable(string path) =>
-        !path.Split('/').Any(s => s is ".." or "." or "" or "bin" or "obj") && PathPatterns.IsUnderAny(path, productRoots);
+        !path.Split('/').Any(s => s is ".." or "." or "" or "bin" or "obj") && PathPatterns.IsUnderAny(path, ReadableRoots);
 }

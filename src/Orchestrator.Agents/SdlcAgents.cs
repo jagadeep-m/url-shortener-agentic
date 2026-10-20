@@ -174,7 +174,7 @@ public sealed class ReviewerAgent(IChatClient client) : SdlcAgent(client)
     public override string Role => "Reviewer";
     public override string RolePrompt => "Check the implementation, tests and docs against each requirement and the design: list each requirement with the code and test that cover it, "
         + "then any gaps or risks. Code that exists but is never called does not meet a requirement. Build and test results are supplied by the host; do not invent them. "
-        + "The current files start with every file this run has changed, including tests from earlier rounds; check them before calling a test missing. "
+        + "The current files start with every file this run has changed, including tests and docs from earlier rounds; check them before calling a test or document missing. "
         + "End the content with a line 'Verdict: PASS' only if every requirement is met by working, called code and by tests; otherwise 'Verdict: FAIL' followed by the specific changes needed.";
     protected override CodeNeeds Needs => CodeNeeds.Files;
     protected override bool WholeProductSource => true;
