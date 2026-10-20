@@ -300,3 +300,7 @@
   one rework fixed it (95 tests passing), the review passed and the release was approved, with no
   compile errors. Its only retry was a reworked Docs answer without a `files` key; a missing key now
   means no file changes (Coder and Tester must still return files).
+- The final run on the committed code (`9f8dfa04…`) completed: the review found a real bug, one
+  rework fixed it (106 tests passing), the review passed and the release was approved. One review
+  was cut off at the Reviewer's 4,096-token output limit and retried; reviews now list every gap,
+  so the limit is 8,192 tokens.

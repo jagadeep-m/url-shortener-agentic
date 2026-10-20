@@ -200,7 +200,8 @@ public sealed class ReviewerAgent(IChatClient client) : SdlcAgent(client)
     }
     // A review cannot be produced without judgement; there is no safe template.
     public override AgentResult? CreateTemplate(AgentTask task, RunContext ctx) => null;
-    public override AutonomyBoundary Boundary => new([], [], 4096);
+    // A review that lists every gap runs long; a live review was cut off at 4,096 tokens.
+    public override AutonomyBoundary Boundary => new([], [], 8192);
 }
 public sealed class ReleaseAgent(IChatClient client) : SdlcAgent(client)
 {

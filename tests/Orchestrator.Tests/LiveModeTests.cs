@@ -138,6 +138,7 @@ public sealed class LiveModeTests : IDisposable
         Assert.Equal(new[] { "src/UrlShortener.Domain/ShortLink.cs", "src/UrlShortener.Api/LinkEndpoints.cs" }, files.Select(f => f.GetProperty("path").GetString()));
         Assert.Contains("complete new content", client.System[0]);
         Assert.Equal(12288, new ArchitectAgent(client).Boundary.MaxTokens); // 6,144 was cut off in the first live run
+        Assert.Equal(8192, new ReviewerAgent(client).Boundary.MaxTokens);   // 4,096 was cut off once reviews listed every gap
         Assert.DoesNotContain(Path.GetFullPath(root), client.User[0].GetRawText());
         Assert.Contains("<workspace>/src/a.cs", client.User[0].GetProperty("prompt").GetString());
         Assert.Contains("ShortLink { Code, IsAvailableAt }", client.User[0].GetProperty("codebaseOutline").GetString()); // the Coder sees the whole map too
