@@ -98,3 +98,10 @@ public sealed class PolicyViolationException(string message, bool rejectedByHuma
 // The stage cannot continue until a human supplies input (for example unanswered open questions).
 // The stage is blocked, its draft is kept, and an explicit resume continues it.
 public sealed class HumanInputRequiredException(string message) : Exception(message);
+
+// A reviewing stage found that the work it depends on does not meet the requirements. The engine re-runs that work
+// with these findings as feedback (bounded), then reviews again.
+public sealed class ReworkRequestedException(string findings) : Exception(findings)
+{
+    public string Findings { get; } = findings;
+}

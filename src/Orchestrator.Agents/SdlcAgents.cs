@@ -159,13 +159,30 @@ public sealed class ReviewerAgent(IChatClient client) : SdlcAgent(client)
 {
     public override string Role => "Reviewer";
     public override string RolePrompt => "Check the implementation, tests and docs against each requirement and the design: list each requirement with the code and test that cover it, "
-        + "then any gaps or risks. Build and test results are supplied by the host; do not invent them.";
+        + "then any gaps or risks. Code that exists but is never called does not meet a requirement. Build and test results are supplied by the host; do not invent them. "
+        + "End the content with a line 'Verdict: PASS' only if every requirement is met by working, called code and by tests; otherwise 'Verdict: FAIL' followed by the specific changes needed.";
     protected override CodeNeeds Needs => CodeNeeds.Files;
+    protected override AgentDocument Interpret(string json, AgentTask task, RunContext ctx)
+    {
+        var document = AgentDocument.Parse(json);
+        Verdicts.Review(document.Content); // a review without a verdict is retried
+        return document;
+    }
+    // A review cannot be produced without judgement; there is no safe template.
+    public override AgentResult? CreateTemplate(AgentTask task, RunContext ctx) => null;
     public override AutonomyBoundary Boundary => new([], [], 4096);
 }
 public sealed class ReleaseAgent(IChatClient client) : SdlcAgent(client)
 {
     public override string Role => "Release";
-    public override string RolePrompt => "Produce a release-readiness recommendation, risks and operator checklist using approved artifacts and validation evidence. Do not publish or deploy anything.";
+    public override string RolePrompt => "Assess release readiness from the approved artifacts and the validation evidence. Begin the content with a line 'Recommendation: READY' "
+        + "or 'Recommendation: NOT READY', then the reasons, risks and an operator checklist. Do not publish or deploy anything.";
+    // The recommendation leads the summary, so the human sees it first at the release prompt.
+    protected override AgentDocument Interpret(string json, AgentTask task, RunContext ctx)
+    {
+        var document = AgentDocument.Parse(json);
+        var label = Verdicts.Ready(document.Content) ? "[READY]" : "[NOT READY]";
+        return document.Summary.StartsWith(label, StringComparison.Ordinal) ? document : document with { Summary = $"{label} {document.Summary}" };
+    }
     public override AutonomyBoundary Boundary => new([], [], 4096);
 }

@@ -3,7 +3,7 @@ using Polly.Retry;
 
 namespace Orchestrator.Core;
 
-internal enum StageOutcome { Completed, Blocked, Failed }
+internal enum StageOutcome { Completed, Blocked, Failed, Rework }
 
 internal sealed class StageExecutionException(string message, Exception? inner = null) : Exception(message, inner);
 internal sealed class AttemptFailedException(string message) : Exception(message);
@@ -12,6 +12,9 @@ internal sealed class StageBlockedException(string message) : Exception(message)
 // Runs one stage: entry gate, approval, bounded retries, fallback chain, then exit gate and commit.
 internal sealed class StageExecutor(RunSession session, IApprovalService approvals)
 {
+    // A failed review sends upstream work back at most this many times before the run stops as Failed.
+    internal const int MaxReworks = 1;
+
     private RunContext Context => session.Context;
 
     public async Task<StageOutcome> RunAsync(StageDefinition definition, IStage stage, CancellationToken ct)
@@ -36,6 +39,12 @@ internal sealed class StageExecutor(RunSession session, IApprovalService approva
         }
         catch (StageBlockedException blocked) { return await StopAsync(definition, StageStatus.Blocked, blocked.Message); }
         catch (StageExecutionException failure) { return await StopAsync(definition, StageStatus.Failed, failure.Message); }
+        catch (ReworkRequestedException rework)
+        {
+            if (state.Reworks >= MaxReworks)
+                return await StopAsync(definition, StageStatus.Failed, $"The review still failed after {state.Reworks} rework(s): {rework.Findings}");
+            return StageOutcome.Rework;   // the engine marks the reviewed stages stale and re-runs them
+        }
     }
 
     private async Task EnterAsync(StageDefinition definition, IStage stage, CancellationToken ct)
@@ -72,6 +81,12 @@ internal sealed class StageExecutor(RunSession session, IApprovalService approva
             }
             await LandAsync(definition, stage, output, ct);
             outcome = "completed";
+        }
+        catch (ReworkRequestedException rework)
+        {
+            await session.UpdateAsync(_ => { state.LastFailure = null; state.Reason = rework.Findings; });
+            await session.Audit.WriteAsync(Context.RunId, "review_failed", definition, verdict: "fail", message: rework.Findings, ct: CancellationToken.None);
+            throw;
         }
         catch (HumanInputRequiredException needed)
         {
@@ -237,7 +252,7 @@ internal sealed class StageExecutor(RunSession session, IApprovalService approva
             return result ?? throw new StageExecutionException("Stage or approval callback returned null.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is not (StageExecutionException or StageBlockedException or BudgetExceededException or PolicyViolationException or HumanInputRequiredException))
+        catch (Exception exception) when (exception is not (StageExecutionException or StageBlockedException or BudgetExceededException or PolicyViolationException or HumanInputRequiredException or ReworkRequestedException))
         {
             throw new StageExecutionException(exception.Message, exception);
         }

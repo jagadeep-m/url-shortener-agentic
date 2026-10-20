@@ -27,6 +27,8 @@ public sealed class StageState
     public string? ReplanReason { get; set; }
     public FallbackLevel? FallbackLevel { get; set; }
     public string? CommitSha { get; set; }
+    // How often this (reviewing) stage sent its upstream work back for rework.
+    public int Reworks { get; set; }
     public DateTime? StartedAtUtc { get; set; }
     public DateTime? FinishedAtUtc { get; set; }
 }

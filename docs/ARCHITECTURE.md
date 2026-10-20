@@ -116,8 +116,18 @@ flowchart TD
   attempt.
 - **Retries:** Polly, at most 3 total attempts, exponential backoff, no jitter. Only attempt
   failures are retried; blocks, rejections, policy denials, cancellation and budget stops are not.
-- **Fallback:** one simplified-prompt attempt, then a deterministic template (read-only roles and
-  Docs only; Coder and Tester have no safe template), then the stage fails.
+- **Fallback:** one simplified-prompt attempt, then a deterministic template (read-only roles
+  except the Reviewer, and Docs; Coder, Tester and Reviewer have no safe template), then the stage
+  fails.
+- **Binding review and rework:** the Reviewer must end with `Verdict: PASS` or `Verdict: FAIL`
+  plus findings, and "code that is never called does not meet a requirement". After the real
+  build and tests pass, a FAIL still fails the validate gate (`review_failed`). The engine then
+  marks the reviewed stages stale, with the findings as their re-plan reason, refreshes anything
+  after them, and reviews again (`rework`). At most one rework cycle runs; a second FAIL fails the
+  run. A failed review is reworked, not retried, since repeating the same review cannot fix the code.
+- **Release recommendation:** the Release agent must state `Recommendation: READY` or
+  `NOT READY`. It's shown as `[READY]` or `[NOT READY]` at the start of the summary in the release
+  prompt; the decision stays with the human.
 - **Rollback:** every failed gate resets the agent-writable paths to the last good commit:
   modified files are checked out, new files deleted. A `rollback` event lists the files. Files
   outside those paths are never touched (ADR 0005).

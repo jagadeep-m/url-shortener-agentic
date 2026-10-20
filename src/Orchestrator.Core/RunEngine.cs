@@ -103,13 +103,15 @@ public sealed class RunEngine
                     && d.DependsOn.All(id => context.StageStatuses[id].Status == StageStatus.Completed)).ToArray();
                 if (wave.Length == 0) break;
                 var outcomes = await RunWaveAsync(executor, wave, stages, tokenBudget, stop.Token);
-                var stopped = wave.Zip(outcomes).Where(x => x.Second != StageOutcome.Completed).ToArray();
+                var stopped = wave.Zip(outcomes).Where(x => x.Second is StageOutcome.Failed or StageOutcome.Blocked).ToArray();
                 if (stopped.Length > 0)
                 {
                     var status = stopped.Any(x => x.Second == StageOutcome.Failed) ? RunStatus.Failed : RunStatus.Blocked;
                     var first = stopped.First(x => status == RunStatus.Failed ? x.Second == StageOutcome.Failed : true).First;
                     return await FinishAsync(session, status, context.StageStatuses[first.Id].Reason);
                 }
+                foreach (var reviewer in wave.Zip(outcomes).Where(x => x.Second == StageOutcome.Rework).Select(x => x.First))
+                    await ReworkAsync(session, ordered, reviewer);
             }
             return await FinishAsync(session, RunStatus.Completed, null);
         }
@@ -199,6 +201,28 @@ public sealed class RunEngine
         await audit.WriteAsync(context.RunId, "replan", verdict: "stale", ct: CancellationToken.None,
             message: $"{why}. Re-landing edited: {string.Join(", ", edited)}. Re-running: {(stale.Length > 0 ? string.Join(", ", stale) : "none")}. Other stages are kept.");
         return null;
+    }
+
+    // A failed review: the reviewed stages are re-run with the findings as their re-plan reason, everything after them
+    // that already ran is refreshed, and the reviewer reviews again. Bounded by StageExecutor.MaxReworks.
+    private async Task ReworkAsync(RunSession session, IReadOnlyList<StageDefinition> ordered, StageDefinition reviewer)
+    {
+        var context = session.Context;
+        var state = context.StageStatuses[reviewer.Id];
+        var findings = state.Reason ?? "The review found unmet requirements.";
+        var reworked = reviewer.DependsOn.Where(id => context.StageStatuses[id].Status == StageStatus.Completed).ToArray();
+        var downstream = Replanner.Downstream(ordered, reworked)
+            .Where(id => id != reviewer.Id && context.StageStatuses[id].Status != StageStatus.Pending).ToArray();
+        await session.UpdateAsync(c =>
+        {
+            state.Reworks++;
+            foreach (var id in reworked) MarkStale(c.StageStatuses[id], $"The review failed. Fix these findings: {findings}", "Reworking after a failed review.");
+            foreach (var id in downstream) MarkStale(c.StageStatuses[id], "Upstream work was reworked after a failed review.", "Re-running after rework.");
+            MarkStale(state, "Review the reworked implementation again.", "Re-reviewing after rework.");
+            c.SupersededDecisions = c.SupersededDecisions.Union(c.Decisions.Where(d => reworked.Contains(d.StageId)).Select(d => d.Id));
+        });
+        await audit.WriteAsync(context.RunId, "rework", verdict: "rework", ct: CancellationToken.None,
+            message: $"Review '{reviewer.Id}' failed; re-running {string.Join(", ", reworked)} with its findings (rework {state.Reworks} of {StageExecutor.MaxReworks}).");
     }
 
     private static void MarkStale(StageState state, string? replanReason, string reason)

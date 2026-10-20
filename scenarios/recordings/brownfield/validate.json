@@ -1,6 +1,6 @@
 {
   "summary": "Review the click-limit change against the requirements and impact report",
   "rationale": "Each requirement maps to code and a test; the host build and test gate supplies the execution evidence.",
-  "content": "# Review\n\n- R1 validation → CreateLinkValidator + ValidatorBoundsMaxClicks / InvalidLimitIsRejectedWith400.\n- R2 410 after limit → LinkService.ResolveAsync live count + RedirectStopsWith410OnceTheClickLimitIsReached.\n- R3 unchanged behaviour → existing suites unchanged and green; LinksWithoutALimitKeepRedirecting.\n- R4 details → LinkDetails.MaxClicks.\n- R5 existing keys → UnsetLimitKeepsExistingIdempotencyFingerprints; nullable migration.\n\nResidual risk: soft limit under bursts (documented).",
+  "content": "# Review\n\n- R1 validation → CreateLinkValidator + ValidatorBoundsMaxClicks / InvalidLimitIsRejectedWith400.\n- R2 410 after limit → LinkService.ResolveAsync live count + RedirectStopsWith410OnceTheClickLimitIsReached.\n- R3 unchanged behaviour → existing suites unchanged and green; LinksWithoutALimitKeepRedirecting.\n- R4 details → LinkDetails.MaxClicks.\n- R5 existing keys → UnsetLimitKeepsExistingIdempotencyFingerprints; nullable migration.\n\nResidual risk: soft limit under bursts (documented).\n\nVerdict: PASS",
   "files": []
 }

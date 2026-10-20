@@ -33,6 +33,8 @@ public sealed class AgentTests : IDisposable
         {
             "Coder" => Document(new FileChange("src/UrlShortener.Domain/X.cs", "class X { }")),
             "Tester" => Document(new FileChange("tests/UrlShortener.UnitTests/XTests.cs", "class XTests { }")),
+            "Reviewer" => Document() with { Content = "# Review\n\nVerdict: PASS" },      // reviews must carry a verdict
+            "Release" => Document() with { Content = "Recommendation: READY\n\n# Release" }, // and releases a recommendation
             _ => Document()
         }).ToJson());
         using var client = new ReplayChatClient(root, "demo");

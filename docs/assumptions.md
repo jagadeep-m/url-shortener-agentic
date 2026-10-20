@@ -231,3 +231,10 @@
     400. The Tester now always receives `Contracts.cs` and `LinkEndpoints.cs`.
 
   Nothing broken landed: each failed attempt was rolled back and the run stopped as Failed.
+- The second live greenfield run (`63000678…`) completed, but the Coder wrote a correct
+  `UrlNormalizer` that nothing called. The Reviewer said so ("the core requirement is therefore not
+  met"), yet validate passed, because its gate only checked the build and tests. The review is now
+  binding: `Verdict: FAIL` fails the gate and triggers one rework cycle, in which the Coder, Tester
+  and Docs re-run with the findings. The Release agent must state READY or NOT READY.
+- Rework is bounded to one cycle (`StageExecutor.MaxReworks`) to cap cost and avoid endless
+  review loops; the human can still resume a failed run after changing the requirement or design.

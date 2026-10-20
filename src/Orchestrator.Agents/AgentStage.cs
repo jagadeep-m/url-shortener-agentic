@@ -104,6 +104,13 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
             await audit.WriteAsync(ctx.RunId, "validation_passed", definition, message: result.Reason, ct: ct);
             reason = result.Reason;
         }
+        if (agent.Role == "Reviewer")
+        {
+            // The review is binding: a FAIL sends the reviewed work back for rework, even when build and tests pass.
+            var (passed, findings) = Verdicts.Review(document.Content);
+            if (!passed) throw new ReworkRequestedException(findings);
+            reason += " Review verdict: PASS.";
+        }
         await File.WriteAllTextAsync(ResultPath(ctx), JsonSerializer.Serialize(new AgentResult(true, output), AgentDocument.Json), ct);
         return GateResult.Pass(reason);
     }
