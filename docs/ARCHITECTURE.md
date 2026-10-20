@@ -160,8 +160,11 @@ The global path policy additionally denies everything outside the product roots 
 secret-bearing file types. Secret findings report `path:line` and never the value. A policy Deny
 stops the stage without retrying (ADR 0006).
 
-**Budgets and safe-stop.** The time budget applies to each engine session; the token budget is
-cumulative and charged from model usage. Exceeding either pauses the run cleanly (`run_paused`,
+**Budgets and safe-stop.** The time budget limits **machine time** in each engine session: a
+`HumanWaitClock` times every approval (stage reviews and file-policy approvals alike, through
+`HumanWaitApprovalService`), and a watcher compares elapsed time minus human waits with the budget.
+Reading, editing and answering never use it up. The token budget is cumulative and charged from
+model usage. Exceeding either pauses the run cleanly (`run_paused`,
 `budget_exceeded`). `--auto-approve` is refused unless `CI=true`.
 
 ## 6. Observability: audit, lineage, metrics

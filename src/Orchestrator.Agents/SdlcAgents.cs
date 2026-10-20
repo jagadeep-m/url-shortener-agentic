@@ -111,7 +111,8 @@ public sealed class ArchitectAgent(IChatClient client) : SdlcAgent(client)
     public override string RolePrompt => "Design the smallest change that meets the approved requirements in the existing codebase (its outline and current files are provided). "
         + "List every file to change or add with its full path, the data model and migration if any, endpoint and contract changes, risks and trade-offs, and an ordered task list. "
         + "Do not write the code. " + EngineeringRules;
-    public override AutonomyBoundary Boundary => new([], [], 6144);
+    // Designs that cite the current code run long; 6,144 tokens was cut off in the first live run.
+    public override AutonomyBoundary Boundary => new([], [], 12288);
     protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
 }
 public sealed class CoderAgent(IChatClient client) : SdlcAgent(client)

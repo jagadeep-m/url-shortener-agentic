@@ -18,7 +18,7 @@ The brief's core requirements and where each one lives:
 | Task decomposition | Scenario DAGs; design artifacts list tasks with dependencies; `plan.json` per run |
 | Codebase reasoning | ImpactAnalyst + Roslyn `CodebaseIndex`: affected files, endpoints, tables, tests |
 | Workflow orchestration | `RunEngine` / `StageExecutor`: DAG, entry/exit gates, parallel waves with a join, approvals, retries, fallback, rollback, safe-stop, policies, audit, metrics, re-planning |
-| Engineering output | Clean Architecture API with migrations and 218 tests; the brownfield change verified by the real gates |
+| Engineering output | Clean Architecture API with migrations and 221 tests; the brownfield change verified by the real gates |
 | Validation and risk control | Real `dotnet build` / `dotnet test` gates, six policies, budgets, human checkpoints |
 | Controlled autonomy | Role autonomy boundaries, a single write path, approvals on high-risk actions, `--auto-approve` only in CI |
 | Final summary | This document, [ARCHITECTURE.md](ARCHITECTURE.md), [TESTING.md](TESTING.md), [assumptions.md](assumptions.md), [adr/](adr/) |
@@ -57,7 +57,7 @@ Key choices (details in the ADRs):
 ## Artifacts
 
 - Source: `src/Orchestrator.*` (engine, agents, policies, CLI) and `src/UrlShortener.*` (product).
-- Tests: 218 across three projects; 90.4% line and 82.7% branch coverage of the solution.
+- Tests: 221 across three projects; 90.4% line and 82.7% branch coverage of the solution.
 - Scenarios: `scenarios/greenfield.yaml`, `brownfield.yaml` and `ambiguous.yaml`, with replay
   recordings.
 - Per run: `input.md`, `plan.json`, drafts, `audit.jsonl`, per-attempt build/test logs,
@@ -70,6 +70,7 @@ Key choices (details in the ADRs):
 | Greenfield | parallel implement/tests/docs; the Tester fails the real test gate once → rollback → retry; retry rate 12.5%, MTTR 8.1 s |
 | Brownfield | impact report (12 files, 3 endpoints, `ShortLinks`, tests); migration approval; a NOT NULL migration fails 15 tests → 8 files rolled back → nullable retry lands |
 | Ambiguous | 3 open questions; answers recorded as decisions; changing Q1 at the design prompt re-plans requirements and design only |
+| Ambiguous, **live** (`gpt-6-luna`) | The model wrote 6 questions of its own; a changed answer re-planned only the dependent stages; two real cut-off answers recovered by retry; a time-budget pause resumed cleanly; build and 84 tests green; 56,754 tokens (a few cents) |
 
 ## Risks, trade-offs and how they are handled
 
@@ -87,7 +88,7 @@ Key choices (details in the ADRs):
 
 ## Validation
 
-- Every phase ended green. The final state is 218 tests passing, repeated at least three times
+- Every phase ended green. The final state is 221 tests passing, repeated at least three times
   with no flakes.
 - All three scenarios ran end to end through the CLI with real git and real gates; results are
   committed.
@@ -102,7 +103,7 @@ Key choices (details in the ADRs):
 All interpretations are in [assumptions.md](assumptions.md). The most important:
 - SDK 9.0.305 builds `net8.0`.
 - `maxAttempts` counts total attempts.
-- The time budget applies per session, the token budget per run.
+- The time budget limits machine time per session (approval waits are excluded); the token budget is per run.
 - Rollback is scoped to agent-writable paths.
 - A policy Deny is not retried.
 - Exit gates run the product's tests.
@@ -111,8 +112,8 @@ All interpretations are in [assumptions.md](assumptions.md). The most important:
 
 ## Limitations
 
-- Replay recordings demonstrate the mechanisms but are hand-authored. Live mode has not been run
-  against a real provider in this environment.
+- Replay recordings demonstrate the mechanisms but are hand-authored. Live mode is proven on the
+  ambiguous scenario with a real model (`gpt-6-luna`); a live code-writing run is the next step.
 - Single process: SQLite checkpoints, an in-memory click queue and cache, and a local file lease.
   There is no distributed execution.
 - Console approvals only. There is no web UI, no approver identity beyond the OS user, and no

@@ -13,7 +13,8 @@ actions and owns final quality.
 | URL Shortener (`src/UrlShortener.*`) | ASP.NET Core Minimal API + EF Core/SQLite: short links, redirects, click analytics, idempotent creation, rate limiting, health checks. |
 
 Start with [docs/ENGINEERING_SUMMARY.md](docs/ENGINEERING_SUMMARY.md), then
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Sample runs of all three scenarios are in [runs/](runs/README.md).
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Sample runs of all three scenarios, plus a live run with a
+real model, are in [runs/](runs/README.md).
 
 ## Prerequisites
 
@@ -154,8 +155,8 @@ without `--replay`:
 dotnet run --project src/Orchestrator.Cli -- run scenarios/greenfield.yaml
 ```
 
-The same gates, policies, approvals and budgets (20 minutes, 400,000 tokens per run by default)
-apply. Model output varies, so live runs may need more retries than the replays. The run header and
+The same gates, policies, approvals and budgets (20 minutes of machine time, so time spent reading
+and approving doesn't count, and 400,000 tokens per run, by default) apply. Model output varies, so live runs may need more retries than the replays. The run header and
 `report.md` name the model that was used.
 
 ### Request a new feature in plain English (live mode)
@@ -188,7 +189,7 @@ dotnet run --project src/Orchestrator.Cli -- run scenarios/feature.yaml --requir
 dotnet test
 ```
 
-218 tests across three projects (Orchestrator.Tests, UrlShortener.UnitTests,
+221 tests across three projects (Orchestrator.Tests, UrlShortener.UnitTests,
 UrlShortener.IntegrationTests). They use temporary SQLite files and git repositories and need no
 network. For coverage (no extra tools; the collector ships with the test SDK):
 

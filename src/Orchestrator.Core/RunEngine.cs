@@ -12,9 +12,10 @@ public sealed class RunEngine
     private readonly IApprovalService approvals;
     private readonly TimeProvider clock;
     private readonly IWorkspaceVersioning? versioning;
+    private readonly HumanWaitClock? humanWait;
 
     public RunEngine(SqliteRunStateStore store, JsonlAuditWriter audit, IApprovalService approvals,
-        TimeProvider? clock = null, IWorkspaceVersioning? versioning = null)
+        TimeProvider? clock = null, IWorkspaceVersioning? versioning = null, HumanWaitClock? humanWait = null)
     {
         if (store.RunsDirectory != audit.RunsDirectory) throw new ArgumentException("State and audit must use the same runs directory.");
         this.store = store;
@@ -22,6 +23,7 @@ public sealed class RunEngine
         this.approvals = approvals;
         this.clock = clock ?? TimeProvider.System;
         this.versioning = versioning;
+        this.humanWait = humanWait;
     }
 
     public async Task<RunContext> StartAsync(Scenario scenario, string requirement, IReadOnlyCollection<IStage> stages, CancellationToken ct = default)
@@ -61,9 +63,26 @@ public sealed class RunEngine
         if (versioning is not null) await versioning.BeginAsync(context, ct);
         using var session = new RunSession(context, store, audit, clock, versioning);
         // Safe-stop: the caller's token (stop command, Ctrl+C), the time budget and the token budget all cancel one source.
-        using var timeBudget = new CancellationTokenSource(BudgetWindow(context.Budget), clock);
+        // The time budget counts machine time: time spent waiting for human approvals is not counted (HumanWaitClock).
+        using var timeBudget = new CancellationTokenSource();
         using var tokenBudget = new CancellationTokenSource();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, timeBudget.Token, tokenBudget.Token);
+        using var watcherStop = new CancellationTokenSource();
+        var watcher = WatchTimeBudgetAsync(session, BudgetWindow(context.Budget), timeBudget, watcherStop.Token);
+        try
+        {
+            return await RunAsync(context, ordered, stages, resume, session, timeBudget, tokenBudget, stop, ct);
+        }
+        finally
+        {
+            await watcherStop.CancelAsync();
+            await watcher;
+        }
+    }
+
+    private async Task<RunContext> RunAsync(RunContext context, IReadOnlyList<StageDefinition> ordered, IReadOnlyDictionary<string, IStage> stages,
+        bool resume, RunSession session, CancellationTokenSource timeBudget, CancellationTokenSource tokenBudget, CancellationTokenSource stop, CancellationToken ct)
+    {
         await session.UpdateAsync(c => { c.Status = RunStatus.Running; c.FinishedAtUtc = null; c.StopReason = null; });
         await audit.WriteAsync(context.RunId, resume ? "run_resumed" : "run_started", ct: CancellationToken.None);
         if (context.GitBranch is not null)
@@ -101,7 +120,7 @@ public sealed class RunEngine
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
             return timeBudget.IsCancellationRequested && !ct.IsCancellationRequested
-                ? await PauseAsync(session, "budget_exceeded", $"Time budget of {context.Budget.MaxMinutes} minutes exhausted.")
+                ? await PauseAsync(session, "budget_exceeded", $"Time budget of {context.Budget.MaxMinutes} minutes of machine time exhausted (time waiting for approvals is not counted).")
                 : await PauseAsync(session, "cancelled", "Cancellation requested; explicit resume is required.");
         }
     }
@@ -215,6 +234,22 @@ public sealed class RunEngine
         await audit.WriteAsync(context.RunId, "run_paused", verdict: verdict, message: reason, ct: CancellationToken.None);
         RecordFinished(session, RunStatus.Paused.ToString());
         return context;
+    }
+
+    // Checks elapsed machine time (run time minus human waits) against the budget and trips the time-budget token.
+    private async Task WatchTimeBudgetAsync(RunSession session, TimeSpan budget, CancellationTokenSource timeBudget, CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100), clock);
+            while (await timer.WaitForNextTickAsync(ct))
+                if (session.Elapsed - (humanWait?.Total ?? TimeSpan.Zero) >= budget)
+                {
+                    await timeBudget.CancelAsync();
+                    return;
+                }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
     }
 
     private static TimeSpan BudgetWindow(RunBudget budget) =>

@@ -493,3 +493,8 @@ appsettings.*.local.json
 *.db-wal
 *.db-journal
 .DS_Store
+
+# Orchestrator run internals (re-creatable). Reports, audit logs, plans, inputs, diffs and stage drafts are kept.
+runs/**/*.result.json
+runs/**/.execution.lock
+runs/**/stop.request

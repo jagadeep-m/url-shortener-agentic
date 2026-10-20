@@ -95,8 +95,9 @@
   keys `<stage>.attempt<N>.json` on that number.
 - Scheduling is wave-based (`Task.WhenAll` per wave). A failure in one wave lets its siblings
   finish and commit, then stops the run.
-- The time budget applies to each engine session and includes time spent waiting for
-  approvals. Resume starts a new time window. The token budget is cumulative; resuming after it
+- The time budget applies to each engine session and counts machine time only; time spent
+  waiting for approvals is excluded (changed after the first live run, where a reviewer's reading
+  and a re-plan used up 15 of 20 minutes). Resume starts a new time window. The token budget is cumulative; resuming after it
   is exhausted needs a higher saved budget.
 - Rollback is scoped to agent paths and uses the run branch's HEAD as the last good commit.
   The repository needs at least one commit; agent paths must be clean and nothing may be
@@ -214,5 +215,9 @@
   only cents, rather than a lower cap that file context could exhaust.
 - The model name comes from `LLM:Model` at the start of a run and is kept with the run, so a resume
   reports the model the run started with.
-- Live mode has been tested against a fake provider only. The first real run may reveal
-  provider-specific differences, to be fixed as they appear.
+- Live mode has run against a real model: the ambiguous scenario with `gpt-6-luna` (sample run
+  `a30912af…`). That run found three issues, all fixed with tests:
+  - the time budget counted human waiting time
+  - the Architect's 6,144-token output limit was too small once designs cite code
+  - the answer sheet's generated summary looked editable and went stale after edits; it is now
+    labelled, and re-rendered whenever the sheet is shown again

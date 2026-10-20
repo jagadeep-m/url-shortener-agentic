@@ -98,6 +98,17 @@ public sealed class ScenarioReplayTests : IDisposable
     }
 
     private string QuestionsPath(Guid run) => Path.Combine(Runs, run.ToString("D"), "open-questions.md");
+    // Changes one Answer line and nothing else, leaving the generated summary stale, like a person editing the file.
+    private static async Task EditAnswerLineAsync(string path, string id, string answer)
+    {
+        var lines = (await File.ReadAllTextAsync(path)).Split('\n');
+        var question = Array.FindIndex(lines, l => l.StartsWith($"## {id}.", StringComparison.Ordinal));
+        var line = Array.FindIndex(lines, question, l => l.StartsWith("Answer:", StringComparison.Ordinal));
+        lines[line] = "Answer: " + answer;
+        await File.WriteAllTextAsync(path, string.Join('\n', lines));
+        Assert.Contains("- Q1: A\n", await File.ReadAllTextAsync(path)); // the summary is now stale
+    }
+
     private static async Task AnswerAsync(string path, params (string Id, string Answer)[] answers)
     {
         var questions = OpenQuestions.Parse(await File.ReadAllTextAsync(path));
@@ -115,7 +126,13 @@ public sealed class ScenarioReplayTests : IDisposable
         {
             run = r.RunId;
             if (r.StageId == "clarify" && nth == 1) await AnswerAsync(QuestionsPath(r.RunId), ("Q1", "A"), ("Q2", "b"), ("Q3", "A"));
-            if (r.StageId == "design" && nth == 1) await AnswerAsync(QuestionsPath(r.RunId), ("Q1", "C")); // the human changes their mind mid-run
+            if (r.StageId == "design" && nth == 1) await EditAnswerLineAsync(QuestionsPath(r.RunId), "Q1", "C"); // the human changes their mind mid-run
+            if (r.StageId == "clarify" && nth == 2)
+            {
+                // Edit only the Answer line, as a person would; the sheet shown at re-review already has a matching summary.
+                var sheet = await File.ReadAllTextAsync(QuestionsPath(r.RunId));
+                Assert.Contains("## Answers (generated: updated after each approval; edit the Answer lines above, not this list)\n- Q1: C", sheet);
+            }
             return true;
         };
         var (scenario, stages, audit) = await Load("ambiguous", approvals, new Validation());

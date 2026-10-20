@@ -1,0 +1,133 @@
+diff --git a/docs/features/link-access-and-marketing-analytics.md b/docs/features/link-access-and-marketing-analytics.md
+new file mode 100644
+index 0000000..559e72d
+--- /dev/null
++++ b/docs/features/link-access-and-marketing-analytics.md
+@@ -0,0 +1,127 @@
++# Link access restrictions and marketing outcome analytics
++
++> **Availability note:** This document describes the designed behavior and API. The supplied design identifies host authentication, a trusted consent signal, and a configured retention duration as deployment prerequisites. The codebase does not currently provide those capabilities, so do not treat the restricted-link or privacy-sensitive analytics behavior as ready to deploy until the prerequisites are implemented and verified.
++
++## What this feature does
++
++Links remain public by default, preserving existing link creation, redirects, and click analytics. A link can optionally be created as restricted. Restricted links require an authenticated creator and record that creator's stable subject identifier as the owner. Only the owner can access a restricted link's redirect, details, or per-link statistics, or change its access policy.
++
++Authorized integrations can submit marketing outcomes—`lead` or `purchase`—attributed to a short link, an external campaign reference, or both. Authorized users can download filtered outcome reports as CSV or JSON. Campaign references are opaque external identifiers; this service has no campaign catalog to validate them against.
++
++The design calls for pseudonymous identifiers to be accepted only when an authorized integration provides a host-verified consent signal. Identifiers must not be exposed in exports. Direct identity fields are not accepted.
++
++## Link access API
++
++### Create a restricted link
++
++`POST /api/v1/links` accepts an optional `accessPolicy`. If omitted, the policy remains `public`. Creating a restricted link requires authentication; the server records the authenticated creator as owner.
++
++```http
++POST /api/v1/links HTTP/1.1
++Content-Type: application/json
++Authorization: <host-issued credentials>
++
++{
++  "url": "https://example.com/offer",
++  "accessPolicy": "restricted"
++}
++```
++
++The existing link-creation response shape is unchanged and includes the access policy, but does not expose the owner's subject identifier. The exact response fields depend on the existing link API contract.
++
++### Change a link's policy
++
++`PATCH /api/v1/links/{code}/access-policy` is owner-only. The design specifies a `204 No Content` success response. An unauthenticated caller receives `401`; an authenticated non-owner receives `403`; an unknown link receives `404`.
++
++```http
++PATCH /api/v1/links/abc123/access-policy HTTP/1.1
++Content-Type: application/json
++Authorization: <host-issued credentials>
++
++{
++  "accessPolicy": "public"
++}
++```
++
++Legacy links have no recorded owner. They remain public and cannot be restricted or managed through this endpoint until ownership is established outside this change.
++
++### Access a restricted link
++
++For restricted links, the redirect route `GET /{code}`, link details route `GET /api/v1/links/{code}`, and statistics route `GET /api/v1/links/{code}/stats` require owner authorization. Unauthenticated requests receive `401`; authenticated non-owners receive `403`. Public links retain their existing behavior, including the existing `302` redirect behavior.
++
++## Marketing analytics API
++
++### Submit an outcome
++
++`POST /api/v1/analytics/outcomes` is for authorized integrations and returns `202 Accepted` when an outcome is accepted. Supply at least one attribution reference: `linkCode` or `campaignReference`. The campaign reference is an opaque external value. Timestamps are UTC. Purchase value and currency are optional, but must be supplied in a valid combination; the exact currency and value validation rules must be confirmed in the API contract.
++
++```http
++POST /api/v1/analytics/outcomes HTTP/1.1
++Content-Type: application/json
++Authorization: <host-issued integration credentials>
++
++{
++  "linkCode": "abc123",
++  "campaignReference": "spring-2026-email",
++  "outcomeType": "purchase",
++  "occurredAt": "2026-04-15T14:30:00Z",
++  "value": 49.95,
++  "currency": "USD",
++  "pseudonymousIdentifier": "pseudonymous-value"
++}
++```
++
++Example response:
++
++```http
++HTTP/1.1 202 Accepted
++```
++
++The design does not specify an acceptance response body. Do not rely on a receipt identifier or other response fields unless they are defined by the implemented API contract. Do not submit the pseudonymous identifier unless the integration has supplied the host's trusted, verified consent signal. A caller-provided boolean alone is not proof of consent.
++
++### Export outcomes
++
++`GET /api/v1/analytics/exports` returns a downloadable report and requires authorization. Supported query parameters are `format=csv|json`, optional `campaignReference`, and optional UTC `from` and `to` filters.
++
++```http
++GET /api/v1/analytics/exports?format=csv&campaignReference=spring-2026-email&from=2026-04-01T00%3A00%3A00Z&to=2026-05-01T00%3A00%3A00Z HTTP/1.1
++Authorization: <host-issued credentials>
++```
++
++A successful export returns `200 OK` with the requested format's content type and a download filename in `Content-Disposition`. For example, a CSV response might look like this:
++
++```http
++HTTP/1.1 200 OK
++Content-Type: text/csv
++Content-Disposition: attachment; filename="outcomes.csv"
++
++outcomeType,occurredAt,linkCode,campaignReference,value,currency
++purchase,2026-04-15T14:30:00Z,abc123,spring-2026-email,49.95,USD
++```
++
++The example columns and filename are illustrative; the design does not settle the export schema or filename convention. Pseudonymous identifiers must not appear in exports.
++
++## Operator configuration and rollout
++
++The design does not define configuration key names. Before enabling these capabilities, operators must ensure the host provides and configures:
++
++- Authentication middleware and a stable subject claim for link owners. The same identity must be used consistently when creating links and checking ownership.
++- Authorization for analytics integrations and export users, with explicit access controls for submission and downloads.
++- A trusted consent-verification signal for identifier-bearing outcomes. Define and validate how this signal is established; reject identifier-bearing events when it cannot be verified.
++- A configured retention duration for outcomes. The service must exclude expired outcomes from API queries and exports.
++
++The design includes migration `20261020120000_AddLinkAccessAndMarketingOutcomes`. It adds restriction and owner fields to links and an outcomes table; existing links are backfilled as public with no owner. Apply and verify the migration, including rollback behavior, before deploying code that depends on the new schema. Link deletion uses restrictive foreign-key behavior to preserve outcome referential integrity.
++
++## Errors and validation
++
++Invalid formats, date ranges, outcome types, currency/value combinations, or missing attribution references return `400` with RFC 7807 Problem Details. Unauthorized submission and export requests return `401` or `403`. Restricted-link access uses `401` for unauthenticated callers and `403` for authenticated non-owners.
++
++## Limitations and release prerequisites
++
++- The supplied application does not configure authentication or authorization. A host must supply these before restricted-link ownership or authorized analytics access can be enforced.
++- The application cannot independently establish valid consent. The host or authorized integration must provide a trusted verification mechanism; do not treat a request boolean as sufficient.
++- Retention is query-time exclusion only in this design. It does not physically delete expired rows. If policy requires deletion at rest, implement and operate a separate cleanup mechanism.
++- Campaign references cannot be checked against a campaign catalog because none is defined here.
++- Legacy links have no owner. Establish ownership outside this feature before attempting to restrict them.
++- Export field names, filename conventions, precise currency/value rules, and the outcome acceptance response body are not specified by the design and must be finalized in the implemented API contract.
++- Web and mobile clients use the same API and authorization rules; client platform is not an authorization input.

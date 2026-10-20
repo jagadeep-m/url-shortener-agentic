@@ -28,7 +28,9 @@ public sealed class ClarificationStage(StageDefinition definition, IAgent agent,
         var state = ctx.StageStatuses[Id];
         if (state.LastFailure is null && state.ReplanReason is null && File.Exists(GetArtifactPath(ctx)) && File.Exists(ResultPath(ctx)))
         {
-            // Same questionnaire, new or changed answers: answers are read after the review.
+            // Same questionnaire, new or changed answers: answers are read after the review. Re-render the sheet first
+            // so its generated summary matches the Answer lines the reviewer is about to see.
+            await RefreshSummaryAsync(ctx, ct);
             var previous = JsonSerializer.Deserialize<AgentResult>(await File.ReadAllTextAsync(ResultPath(ctx), ct), AgentDocument.Json)?.Output;
             if (previous is not null)
             {
@@ -37,7 +39,7 @@ public sealed class ClarificationStage(StageDefinition definition, IAgent agent,
             }
         }
         var task = new AgentTask(Id, $"List the ambiguities in the requirement as open questions ({agent.Role}).", DependsOn.Select(id => ctx.Artifacts[id]).ToArray(), Math.Max(1, state.Attempts));
-        await audit.WriteAsync(ctx.RunId, "agent_requested", definition, message: agent.Role, ct: ct, promptHash: Artifact.Hash(JsonSerializer.Serialize(task, AgentDocument.Json)));
+        await audit.WriteAsync(ctx.RunId, "agent_requested", definition, message: agent.Role + (ctx.Scenario.Model is { } model ? $" via {model}" : ""), ct: ct, promptHash: Artifact.Hash(JsonSerializer.Serialize(task, AgentDocument.Json)));
         var result = await agent.RunAsync(task, ctx, ct);
         if (!result.Success || result.Output is null) throw new InvalidOperationException(result.Error ?? "Clarifier failed without output.");
         var questions = OpenQuestions.Parse(AgentDocument.Parse(result.Output.Artifact.Content).Content).Select(q => q with { Answer = null }).ToArray();
@@ -81,6 +83,16 @@ public sealed class ClarificationStage(StageDefinition definition, IAgent agent,
         // Rewrite the sheet in canonical form (answers summary included); re-plan detection ignores formatting.
         await File.WriteAllTextAsync(GetArtifactPath(ctx), output.Artifact.Content, ct);
         return GateResult.Pass($"{OpenQuestions.Parse(output.Artifact.Content).Count} open questions answered by a human.");
+    }
+
+    private async Task RefreshSummaryAsync(RunContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            var current = OpenQuestions.Parse(await File.ReadAllTextAsync(GetArtifactPath(ctx), ct));
+            await File.WriteAllTextAsync(GetArtifactPath(ctx), OpenQuestions.Render(ctx.Requirement, current), ct);
+        }
+        catch (InvalidDataException) { } // an invalid sheet is left as is; the review reports what to fix
     }
 
     private static string Shape(OpenQuestion q) => q.Id + "|" + q.Text + "|" + string.Join("|", q.Options.Select(o => o.Letter + o.Text));

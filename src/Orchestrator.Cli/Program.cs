@@ -61,7 +61,9 @@ public static class Program
         if (saved is null && !scenario.Replay) scenario.Model = configuration["LLM:Model"];
         using var services = new ServiceCollection().AddScenarioChatClient(scenario, workspace, configuration).BuildServiceProvider();
         var client = services.GetRequiredService<IChatClient>();
-        var approvals = new ConsoleApprovalService(autoApprove);
+        // Every approval (stage reviews and file-policy approvals) is timed, so the time budget counts machine time only.
+        var humanWait = new HumanWaitClock();
+        var approvals = new HumanWaitApprovalService(new ConsoleApprovalService(autoApprove), humanWait);
         using var audit = new JsonlAuditWriter(runs);
         var files = new FileChangeService(workspace, DefaultPolicies.Create(new DotnetVulnerabilityScanner()), approvals, audit);
         using var stop = new CancellationTokenSource();
@@ -91,7 +93,7 @@ public static class Program
             var validation = new DotnetValidationRunner(workspace, ProductTests);
             var stages = scenario.Stages.Select(definition => StageFactory.Create(definition, agents, files, runs, validation, audit, Started)).ToArray();
             var git = new GitWorkspace(workspace, DefaultPolicies.AgentRoots);
-            var engine = new RunEngine(store, audit, approvals, versioning: git);
+            var engine = new RunEngine(store, audit, approvals, versioning: git, humanWait: humanWait);
             var result = saved is null ? await engine.StartAsync(scenario, scenario.Requirement, stages, stop.Token)
                 : await engine.ResumeAsync(saved.RunId, stages, stop.Token);
             AnsiConsole.WriteLine($"Run {result.RunId}: {result.Status}" + (result.StopReason is null ? "" : $" ({result.StopReason})"));

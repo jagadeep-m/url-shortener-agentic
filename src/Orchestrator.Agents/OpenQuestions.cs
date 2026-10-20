@@ -76,7 +76,7 @@ public static partial class OpenQuestions
             foreach (var option in q.Options) text.Append($"- {option.Letter}. {option.Text}\n");
             text.Append($"Answer: {q.Answer}\n");
         }
-        text.Append("\n## Answers\n");
+        text.Append("\n## Answers (generated: updated after each approval; edit the Answer lines above, not this list)\n");
         foreach (var q in questions) text.Append($"- {q.Id}: {q.Answer ?? "(unanswered)"}\n");
         return text.ToString();
     }

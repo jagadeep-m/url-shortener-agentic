@@ -1,0 +1,98 @@
+{
+  "runId": "a30912af-d7be-4606-a100-d2d4a34b12ac",
+  "scenario": "ambiguous",
+  "replay": false,
+  "model": "gpt-6-luna",
+  "requirement": "Make the links more secure and give marketing better analytics.",
+  "maxMinutes": 20,
+  "maxTokens": 400000,
+  "retry": {
+    "maxAttempts": 3,
+    "backoff": "exponential",
+    "baseSeconds": 2
+  },
+  "stages": [
+    {
+      "id": "clarify",
+      "agent": "Clarifier",
+      "dependsOn": [],
+      "risk": "high",
+      "wave": 1,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "requirements",
+      "agent": "Requirements",
+      "dependsOn": [
+        "clarify"
+      ],
+      "risk": "high",
+      "wave": 2,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "design",
+      "agent": "Architect",
+      "dependsOn": [
+        "requirements"
+      ],
+      "risk": "high",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "docs",
+      "agent": "Docs",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "low",
+      "wave": 4,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "validate",
+      "agent": "Reviewer",
+      "dependsOn": [
+        "docs"
+      ],
+      "risk": "medium",
+      "wave": 5,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "release",
+      "agent": "Release",
+      "dependsOn": [
+        "validate"
+      ],
+      "risk": "high",
+      "wave": 6,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    }
+  ]
+}

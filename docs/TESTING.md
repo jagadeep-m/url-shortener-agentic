@@ -5,7 +5,7 @@ dotnet build
 dotnet test
 ```
 
-218 tests, about 5 seconds, no network, no external database. Each test uses its own temporary
+221 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
 SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
 Requires the .NET 8 runtimes (see the README).
 
@@ -42,7 +42,7 @@ Requires the .NET 8 runtimes (see the README).
 - RateLimitTests: per-IP 429 with `Retry-After`
 - ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
 
-**Orchestrator.Tests (134)**
+**Orchestrator.Tests (137)**
 
 | Class | Covers |
 | --- | --- |
@@ -57,6 +57,7 @@ Requires the .NET 8 runtimes (see the README).
 | MetricsTests | success rate, retry rate, MTTR, human wait, machine time and per-stage latency from a hand-written audit log; aggregates; live Meter instruments; report and lineage rendering |
 | CodebaseIndexTests | Roslyn endpoints with group prefixes, table mappings, affected files/endpoints/tables/tests, unknown seeds; indexes the real solution |
 | OpenQuestionsTests | answer normalisation, canonical round-trip, the 2–3 interpretation rule |
+| HumanWaitTests | overlapping approval waits counted once; a long approval no longer exhausts the time budget, while the same wait without the clock still does |
 | LiveModeTests | `--requirement` parsing and its refusal with `--replay`; `feature.yaml` graph; code context (only named, existing product files; no traversal or build output; size and budget caps; absolute paths redacted; outline content); what each role is shown; the provider client against a fake server (reply, usage, served model, request shape, 401/404/429 explanations with the provider's message, cut-off answers); fenced JSON; the model named in the report |
 | ScenarioReplayTests | brownfield on real git (impact report, migration approval twice, rollback, `diff.patch`); ambiguous (answers as decisions, mid-run answer change re-plans, unanswered questions block) |
 
