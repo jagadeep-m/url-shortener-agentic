@@ -7,7 +7,7 @@ namespace UrlShortener.Api;
 public sealed class ClickQueue
 {
     private readonly Channel<ClickEvent> channel = Channel.CreateBounded<ClickEvent>(new BoundedChannelOptions(1024)
-        { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+    { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
     public bool TryWrite(ClickEvent click) => channel.Writer.TryWrite(click);
     public ChannelReader<ClickEvent> Reader => channel.Reader;
     public void Complete() => channel.Writer.TryComplete();

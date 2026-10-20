@@ -80,7 +80,7 @@ public sealed class SqliteRunStateStore
     private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
     {
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-            { DataSource = DatabasePath, Pooling = false, DefaultTimeout = 30 }.ToString());
+        { DataSource = DatabasePath, Pooling = false, DefaultTimeout = 30 }.ToString());
         try
         {
             await connection.OpenAsync(ct);

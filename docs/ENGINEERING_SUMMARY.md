@@ -18,7 +18,7 @@ The brief's core requirements and where each one lives:
 | Task decomposition | Scenario DAGs; design artifacts list tasks with dependencies; `plan.json` per run |
 | Codebase reasoning | ImpactAnalyst + Roslyn `CodebaseIndex`: affected files, endpoints, tables, tests; `CodeContext` gives agents a read-only outline and the current source |
 | Workflow orchestration | `RunEngine` / `StageExecutor`: DAG, entry/exit gates, parallel waves with a join, approvals, retries, fallback, rollback, safe-stop, policies, audit, metrics, re-planning, binding review with bounded rework |
-| Engineering output | Clean Architecture API with migrations and 250 tests; the brownfield change verified by the real gates |
+| Engineering output | Clean Architecture API with migrations and 251 tests; the brownfield change verified by the real gates |
 | Validation and risk control | Real `dotnet build` / `dotnet test` gates, six policies, budgets, human checkpoints |
 | Controlled autonomy | Role autonomy boundaries, a single write path, approvals on high-risk actions, `--auto-approve` only in CI |
 | Final summary | This document, [ARCHITECTURE.md](ARCHITECTURE.md), [TESTING.md](TESTING.md), [assumptions.md](assumptions.md), [adr/](adr/) |
@@ -59,7 +59,7 @@ Key choices (details in the ADRs):
 ## Artifacts
 
 - Source: `src/Orchestrator.*` (engine, agents, policies, CLI) and `src/UrlShortener.*` (product).
-- Tests: 250 across three projects; 91.1% line and 83.6% branch coverage of the solution.
+- Tests: 251 across three projects; 91.1% line and 83.6% branch coverage of the solution.
 - Scenarios: `scenarios/greenfield.yaml`, `brownfield.yaml` and `ambiguous.yaml`, with replay
   recordings.
 - Per run: `input.md`, `plan.json`, drafts, `audit.jsonl`, per-attempt build/test logs,
@@ -127,7 +127,7 @@ Engineering judgment behind these changes:
 
 ## Validation
 
-- Every phase ended green. The final state is 250 tests passing, repeated at least three times
+- Every phase ended green. The final state is 251 tests passing, repeated at least three times
   with no flakes.
 - All three scenarios ran end to end through the CLI with real git and real gates; results are
   committed.

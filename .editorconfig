@@ -17,3 +17,8 @@ csharp_prefer_braces = true:suggestion
 
 [*.md]
 trim_trailing_whitespace = false
+
+# EF Core writes migrations with a UTF-8 byte order mark; they are generated code, not hand-formatted.
+[src/UrlShortener.Infrastructure/Migrations/*.cs]
+charset = utf-8-bom
+generated_code = true

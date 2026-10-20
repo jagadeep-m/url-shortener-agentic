@@ -27,7 +27,8 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new()
     {
-        Title = "URL Shortener", Version = "v1",
+        Title = "URL Shortener",
+        Version = "v1",
         Description = "Create short links, follow them, and read click analytics. Errors use RFC 7807 ProblemDetails."
     });
     // Read C# nullable annotations, so non-nullable members are documented as required and not nullable.

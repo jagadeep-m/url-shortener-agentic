@@ -22,7 +22,7 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
         + "A schema change needs an EF Core migration: one class with [DbContext(typeof(AppDbContext))] and [Migration(\"yyyyMMddHHmmss_Name\")] attributes and Up/Down methods, "
         + "plus the matching change to AppDbContextModelSnapshot.cs. ";
     private static readonly System.Text.Json.JsonSerializerOptions PromptJson = new(AgentDocument.Json)
-        { WriteIndented = false, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    { WriteIndented = false, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     // Read-only code access; null keeps the agent code-blind (as in most unit tests).
     public CodeContext? Code { get; init; }
@@ -56,7 +56,8 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
         if (remaining <= 0) throw new BudgetExceededException($"Run token budget exhausted before the {Role} call.");
         var options = new ChatOptions
         {
-            MaxOutputTokens = (int)Math.Min(Boundary.MaxTokens, remaining), ResponseFormat = ChatResponseFormat.Json,
+            MaxOutputTokens = (int)Math.Min(Boundary.MaxTokens, remaining),
+            ResponseFormat = ChatResponseFormat.Json,
             AdditionalProperties = new() { ["stageId"] = task.StageId, ["attempt"] = task.Attempt }
         };
         if (task.Simplified) options.AdditionalProperties["variant"] = "simple";

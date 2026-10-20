@@ -105,8 +105,12 @@ public sealed class ReviewTests : IDisposable
 
     private async Task<(RunContext Result, string[] Events)> Run(Work implement, Review review)
     {
-        var scenario = new Scenario { Name = "review", Retry = new() { BaseSeconds = 0.001 },
-            Stages = [new() { Id = "implement", Agent = "Coder" }, new() { Id = "validate", Agent = "Reviewer", DependsOn = ["implement"] }] };
+        var scenario = new Scenario
+        {
+            Name = "review",
+            Retry = new() { BaseSeconds = 0.001 },
+            Stages = [new() { Id = "implement", Agent = "Coder" }, new() { Id = "validate", Agent = "Reviewer", DependsOn = ["implement"] }]
+        };
         using var audit = new JsonlAuditWriter(directory);
         var result = await new RunEngine(new(directory), audit, new Approvals()).StartAsync(scenario, "Normalize URLs", [implement, review]);
         var events = (await File.ReadAllLinesAsync(audit.GetPath(result.RunId))).Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement.GetProperty("event").GetString()!).ToArray();
@@ -172,8 +176,12 @@ public sealed class ReviewTests : IDisposable
     {
         var log = new List<string>();
         string[] work = ["implement", "tests", "docs"];
-        var scenario = new Scenario { Name = "review", Retry = new() { BaseSeconds = 0.001 },
-            Stages = [.. work.Select(id => new StageDefinition { Id = id, Agent = id }), new() { Id = "validate", Agent = "Reviewer", DependsOn = [.. work] }] };
+        var scenario = new Scenario
+        {
+            Name = "review",
+            Retry = new() { BaseSeconds = 0.001 },
+            Stages = [.. work.Select(id => new StageDefinition { Id = id, Agent = id }), new() { Id = "validate", Agent = "Reviewer", DependsOn = [.. work] }]
+        };
         using var audit = new JsonlAuditWriter(directory);
         var result = await new RunEngine(new(directory), audit, new Approvals())
             .StartAsync(scenario, "Normalize URLs", [.. work.Select(id => new Logged(id, log)), new Logged("validate", log, work)]);

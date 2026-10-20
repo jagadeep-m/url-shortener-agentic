@@ -99,7 +99,8 @@ public sealed class OpenAiCompatibleChatClient : BufferedChatClient
             model = options?.ModelId ?? model,
             messages = messages.Select(m => new { role = m.Role.Value, content = m.Text }),
             max_completion_tokens = options?.MaxOutputTokens ?? 4096,
-            response_format = new { type = "json_object" }, store = false
+            response_format = new { type = "json_object" },
+            store = false
         });
         using var response = await http.SendAsync(request, cancellationToken);
         var raw = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -113,7 +114,7 @@ public sealed class OpenAiCompatibleChatClient : BufferedChatClient
         var text = choice.GetProperty("message").GetProperty("content").GetString();
         if (string.IsNullOrWhiteSpace(text)) throw new InvalidDataException("The model returned no content.");
         var result = new ChatResponse(new ChatMessage(ChatRole.Assistant, text))
-            { ModelId = body.RootElement.TryGetProperty("model", out var id) ? id.GetString() : model };
+        { ModelId = body.RootElement.TryGetProperty("model", out var id) ? id.GetString() : model };
         if (body.RootElement.TryGetProperty("usage", out var usage))
             result.Usage = new UsageDetails { InputTokenCount = Count(usage, "prompt_tokens"), OutputTokenCount = Count(usage, "completion_tokens"), TotalTokenCount = Count(usage, "total_tokens") };
         return result;

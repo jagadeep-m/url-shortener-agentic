@@ -221,7 +221,9 @@ public sealed class WorkflowTests : IDisposable
         Assert.IsType<ReplayChatClient>(provider.GetRequiredService<IChatClient>());
     }
     [Theory]
-    [InlineData("approve\n", true)][InlineData("reject\n", false)][InlineData("", false)]
+    [InlineData("approve\n", true)]
+    [InlineData("reject\n", false)]
+    [InlineData("", false)]
     public async Task Console_requires_explicit_approval(string input, bool approved)
     {
         var service = new ConsoleApprovalService(false, new StringReader(input));
@@ -245,6 +247,25 @@ public sealed class WorkflowTests : IDisposable
         stop.Cancel();
         var service = new ConsoleApprovalService(false, new StringReader("approve\n"));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.RequestAsync(new(Guid.NewGuid(), "design", RiskLevel.High, "Review"), stop.Token));
+    }
+
+    [Fact]
+    public async Task Auto_approve_is_refused_outside_CI_and_named_as_such_inside_it()
+    {
+        var original = Environment.GetEnvironmentVariable("CI");
+        var request = new ApprovalRequest(Guid.NewGuid(), "release", RiskLevel.High, "Review");
+        try
+        {
+            Environment.SetEnvironmentVariable("CI", null);
+            var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => new ConsoleApprovalService(true).RequestAsync(request, default));
+            Assert.Equal("--auto-approve is restricted to tests/CI (CI=true).", refused.Message);
+
+            Environment.SetEnvironmentVariable("CI", "true");
+            var approved = await new ConsoleApprovalService(true).RequestAsync(request, default);
+            Assert.True(approved.Approved);
+            Assert.Equal("ci-auto-approve", approved.Approver); // the audit log shows the approval was automatic
+        }
+        finally { Environment.SetEnvironmentVariable("CI", original); }
     }
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
 }

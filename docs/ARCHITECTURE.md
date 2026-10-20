@@ -238,9 +238,10 @@ their name). `--auto-approve` is refused unless `CI=true`.
   - a recording may hold prompt-matched variants, so replays follow human answers
   - no network and no key; a missing recording is an error, never a silent live call (ADR 0004)
 
-**Live mode and code context.** For a new requirement, `run scenarios/feature.yaml --requirement "..."`
-replaces the scenario's requirement (replay is refused, because it only knows the recorded demo
-scenarios). A real model cannot change code it has never seen, so every agent shares a read-only
+**Live mode and code context.** `--requirement "..."` replaces a scenario's requirement, on
+greenfield, brownfield or feature (replay is refused, because it only knows the recorded demo
+scenarios; the built-in requirements of greenfield and brownfield describe their replay
+demonstrations, so live runs of those pass `--requirement`). A real model cannot change code it has never seen, so every agent shares a read-only
 `CodeContext`, and each role declares what it needs (`SdlcAgent.Needs`):
 - **Outline** (files, types, members, endpoints, tables; built from Roslyn syntax trees): the
   ImpactAnalyst, Architect, Coder and Tester, so plans and code name real types.

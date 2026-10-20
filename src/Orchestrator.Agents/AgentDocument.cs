@@ -8,7 +8,8 @@ public sealed record AgentDocument(string Summary, string Rationale, string Cont
 {
     public static JsonSerializerOptions Json { get; } = new(JsonSerializerDefaults.Web)
     {
-        WriteIndented = true, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+        WriteIndented = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
     // Models sometimes wrap JSON in a markdown fence (```json ... ```); the fence is removed before parsing.
     public static string Unwrap(string text)

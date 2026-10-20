@@ -110,7 +110,8 @@ This is the core of the project. Each part of the requirement and how it is met:
   free of known vulnerabilities; migrations and diffs over 400 lines need approval.
 - **Audit-grade observability and traceability:** `audit.jsonl` is an append-only record of every
   gate, approval, policy verdict, retry, rollback and rework, with a trace id, prompt and output
-  hashes and the approver. The engine also emits OpenTelemetry traces and metrics.
+  hashes and the approver. The engine also emits traces and metrics through the standard .NET
+  OpenTelemetry API (`ActivitySource` and `Meter`); no exporter is configured in this prototype.
 - **Reliability metrics:** `report.md` shows success rate, retry rate, rollback frequency, MTTR
   (mean time to recover), end-to-end and per-stage latency, and human waiting time.
 - **Dynamic re-planning:** if an artifact changes after it was approved (for example you edit the
@@ -124,7 +125,7 @@ Code: `src/Orchestrator.Core` (`RunEngine.cs`, `StageExecutor.cs`, `GitWorkspace
 
 The URL shortener is production-style code: Clean Architecture in four projects, a documented
 OpenAPI (Swagger) contract, an EF Core schema with migrations, RFC 7807 error responses, rate
-limiting, idempotent creation, background click recording and health checks. It has 250 automated
+limiting, idempotent creation, background click recording and health checks. It has 251 automated
 tests (unit and integration) with 91% line coverage. In live mode, the agents produced working
 features with their own tests and documentation (see [docs/SAMPLE_RUNS.md](docs/SAMPLE_RUNS.md)).
 
@@ -179,7 +180,7 @@ after live runs.
 - **Clarity and defensibility of decisions:** decision lineage per run, ADRs, and
   [docs/assumptions.md](docs/assumptions.md) recording every interpretation.
 - **Modular, testable, reliable, secure, scalable code with safe change management:** small
-  projects with dependency injection, 250 tests, a branch per run with rollback, secret scanning,
+  projects with dependency injection, 251 tests, a branch per run with rollback, secret scanning,
   and no keys in code. Scale limits are stated honestly in the summary.
 - **Engineering judgment:** the trade-offs in the summary and the record of how each live-run
   failure was diagnosed and fixed (section 10).
@@ -194,8 +195,10 @@ recorded model answers, and `runs/` holds the output of orchestrator runs.
 ```
 UrlShortenerAgentic.sln          the solution
 global.json                      pins the .NET SDK version
-Directory.Build.props            shared settings (net8.0, nullable, warnings as errors)
+Directory.Build.props            shared settings for every project (nullable, implicit usings, C# 12)
+.editorconfig                    formatting rules (checked with dotnet format)
 src/
+  Directory.Build.props          adds "warnings as errors" for production code only
   Orchestrator.Core/             dependency graph engine, gates, retries, rollback, state, audit, metrics
   Orchestrator.Agents/           the agents, code context, replay and live model clients
   Orchestrator.Policies/         path, secret, package, diff size, migration and vulnerability policies
@@ -287,7 +290,7 @@ dotnet test
 ```
 
 This takes about 10 seconds and should print three lines starting with `Passed!`: 43 tests in
-UrlShortener.UnitTests, 41 in UrlShortener.IntegrationTests and 166 in Orchestrator.Tests, 250 in
+UrlShortener.UnitTests, 41 in UrlShortener.IntegrationTests and 167 in Orchestrator.Tests, 251 in
 total. If you see these, the setup is complete.
 
 ## 4. Run the URL shortener API
@@ -732,7 +735,7 @@ The reasoning behind each change is in the "Live-run hardening" section of
 dotnet test
 ```
 
-250 tests in three projects. They create temporary SQLite databases and git repositories and need
+251 tests in three projects. They create temporary SQLite databases and git repositories and need
 no network. To measure code coverage:
 
 ```bash

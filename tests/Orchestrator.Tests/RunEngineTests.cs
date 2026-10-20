@@ -55,7 +55,7 @@ public sealed class RunEngineTests : IDisposable
     {
         Retry = new() { BaseSeconds = 0.001 },
         Stages = stages.Select(stage => new StageDefinition
-            { Id = stage.Id, Agent = "TestAgent", DependsOn = stage.DependsOn.ToList(), Risk = stage.Risk }).ToList()
+        { Id = stage.Id, Agent = "TestAgent", DependsOn = stage.DependsOn.ToList(), Risk = stage.Risk }).ToList()
     };
 
     [Fact]
@@ -192,8 +192,11 @@ public sealed class RunEngineTests : IDisposable
     [Fact]
     public async Task InvalidDecisionLineageIsRejectedBeforePublication()
     {
-        var stage = new Stage("first") { Body = (_, _) => Task.FromResult(new StageOutput(new Artifact("x", "x"),
-            [new Decision("d", "first", "Summary", "Rationale", ["missing-parent"], "Agent", DateTime.UtcNow)])) };
+        var stage = new Stage("first")
+        {
+            Body = (_, _) => Task.FromResult(new StageOutput(new Artifact("x", "x"),
+            [new Decision("d", "first", "Summary", "Rationale", ["missing-parent"], "Agent", DateTime.UtcNow)]))
+        };
         var result = await Engine().StartAsync(Plan(stage), "Build", [stage]);
         Assert.Equal(RunStatus.Failed, result.Status);
         Assert.Contains("lineage", result.StageStatuses["first"].Reason);
@@ -240,7 +243,9 @@ public sealed class RunEngineTests : IDisposable
     public async Task A_token_budget_pause_continues_only_after_an_audited_budget_raise()
     {
         var calls = 0;
-        var stage = new Stage("review") { Body = (ctx, _) =>
+        var stage = new Stage("review")
+        {
+            Body = (ctx, _) =>
         {
             if (++calls == 1)
             {
@@ -248,7 +253,8 @@ public sealed class RunEngineTests : IDisposable
                 throw new BudgetExceededException("Run token budget exceeded (150/100) by the Reviewer call.");
             }
             return Task.FromResult(new StageOutput(new Artifact("review.md", "PASS")));
-        } };
+        }
+        };
         var plan = Plan(stage);
         plan.Budget = new() { MaxTokens = 100 };
         var paused = await Engine().StartAsync(plan, "Build", [stage]);

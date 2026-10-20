@@ -29,7 +29,7 @@ public sealed class CachedRedirectStore(IShortLinkRepository links, RedirectCach
             if (shared.Cache.TryGetValue(code, out ShortLink? cached)) return cached;
             var link = await links.FindByCodeAsync(code, ct);
             if (link is not null) shared.Cache.Set(code, link, new MemoryCacheEntryOptions
-                { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1), Size = 1 });
+            { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1), Size = 1 });
             return link;
         }
         finally { gate.Release(); }

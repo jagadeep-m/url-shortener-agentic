@@ -3,9 +3,10 @@
 ```bash
 dotnet build
 dotnet test
+dotnet format UrlShortenerAgentic.sln --verify-no-changes
 ```
 
-250 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
+251 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
 SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
 Requires the .NET 8 runtimes (see the README).
 
@@ -43,7 +44,7 @@ Requires the .NET 8 runtimes (see the README).
 - RateLimitTests: per-IP 429 with `Retry-After`
 - ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
 
-**Orchestrator.Tests (166)**
+**Orchestrator.Tests (167)**
 
 | Class | Covers |
 | --- | --- |
@@ -54,7 +55,7 @@ Requires the .NET 8 runtimes (see the README).
 | AgentTests | every role's structured output and parent decisions; replay selection (variant, attempt, base); retry feedback in prompts; templates; boundary and symlink escapes; build/test output parsing |
 | PolicyTests | Allow, RequireApproval and Deny for each of the six policies; unified diff format, hunks and line numbers |
 | GuardrailTests | an agent cannot write `.github/` (not correctable) or commit a fake API key; a file in another role's folders is a correctable denial naming the allowed folders and nothing is written; design and Coder prompts assign each folder to one role (and the key never reaches the audit log); approval shows reasons and the diff; new package detection |
-| WorkflowTests | greenfield replay end to end with real policies; Tester retry; editing design re-runs only downstream stages; resume after an edit; console approval paths |
+| WorkflowTests | `--auto-approve` refused outside CI and recorded as `ci-auto-approve` inside it; greenfield replay end to end with real policies; Tester retry; editing design re-runs only downstream stages; resume after an edit; console approval paths |
 | MetricsTests | success rate, retry rate, MTTR, human wait, machine time and per-stage latency from a hand-written audit log; aggregates; live Meter instruments; report and lineage rendering |
 | CodebaseIndexTests | Roslyn endpoints with group prefixes, table mappings, affected files/endpoints/tables/tests, unknown seeds; indexes the real solution |
 | OpenQuestionsTests | answer normalisation, canonical round-trip, the 2 to 3 interpretation rule |

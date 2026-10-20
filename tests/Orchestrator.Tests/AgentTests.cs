@@ -12,8 +12,12 @@ public sealed class AgentTests : IDisposable
     public AgentTests() => Directory.CreateDirectory(Path.Combine(root, "demo"));
     private Task Recording(string json) => File.WriteAllTextAsync(Path.Combine(root, "demo", "stage.json"), json);
     private static AgentDocument Document(params FileChange[] files) => new("Summary", "Because constraints matter", "# Artifact", files);
-    private static RunContext Context() => new() { Requirement = "Shorten links", Scenario = new() { Stages = [new() { Id = "stage", Agent = "Requirements", DependsOn = ["upstream"] }] },
-        Decisions = [new("parent", "upstream", "Approved", "Reviewed", [], "human", DateTime.UtcNow)] };
+    private static RunContext Context() => new()
+    {
+        Requirement = "Shorten links",
+        Scenario = new() { Stages = [new() { Id = "stage", Agent = "Requirements", DependsOn = ["upstream"] }] },
+        Decisions = [new("parent", "upstream", "Approved", "Reviewed", [], "human", DateTime.UtcNow)]
+    };
     private sealed class Approval(bool approved = true) : IApprovalService
     {
         public int Calls;
@@ -25,7 +29,13 @@ public sealed class AgentTests : IDisposable
         public PolicyVerdict Evaluate(ProposedChange change, RunContext ctx) => verdict;
     }
     [Theory]
-    [InlineData("Requirements")][InlineData("Architect")][InlineData("Coder")][InlineData("Tester")][InlineData("Docs")][InlineData("Reviewer")][InlineData("Release")]
+    [InlineData("Requirements")]
+    [InlineData("Architect")]
+    [InlineData("Coder")]
+    [InlineData("Tester")]
+    [InlineData("Docs")]
+    [InlineData("Reviewer")]
+    [InlineData("Release")]
     public async Task Roles_return_structured_artifacts_and_parent_decisions(string role)
     {
         // Code-writing roles must return at least one file, so their fake answers carry one.
@@ -38,8 +48,16 @@ public sealed class AgentTests : IDisposable
             _ => Document()
         }).ToJson());
         using var client = new ReplayChatClient(root, "demo");
-        SdlcAgent agent = role switch { "Requirements" => new RequirementsAgent(client), "Architect" => new ArchitectAgent(client),
-            "Coder" => new CoderAgent(client), "Tester" => new TesterAgent(client), "Docs" => new DocsAgent(client), "Reviewer" => new ReviewerAgent(client), _ => new ReleaseAgent(client) };
+        SdlcAgent agent = role switch
+        {
+            "Requirements" => new RequirementsAgent(client),
+            "Architect" => new ArchitectAgent(client),
+            "Coder" => new CoderAgent(client),
+            "Tester" => new TesterAgent(client),
+            "Docs" => new DocsAgent(client),
+            "Reviewer" => new ReviewerAgent(client),
+            _ => new ReleaseAgent(client)
+        };
         var result = await agent.RunAsync(new("stage", "Work", []), Context(), default);
         Assert.True(result.Success);
         Assert.Equal(role, result.Output!.Decisions.Single().MadeBy);
@@ -69,7 +87,9 @@ public sealed class AgentTests : IDisposable
         Assert.Throws<ArgumentException>(() => new ReplayChatClient(root, "../secret"));
     }
     [Theory]
-    [InlineData("{}")] [InlineData("null")] [InlineData("{\"summary\":\"x\",\"rationale\":\"y\",\"content\":\"z\",\"files\":[],\"extra\":true}")]
+    [InlineData("{}")]
+    [InlineData("null")]
+    [InlineData("{\"summary\":\"x\",\"rationale\":\"y\",\"content\":\"z\",\"files\":[],\"extra\":true}")]
     public async Task Invalid_schema_cannot_reach_agent_output(string json)
     {
         await Recording(json);
@@ -84,14 +104,18 @@ public sealed class AgentTests : IDisposable
         Assert.False((await new RequirementsAgent(client).RunAsync(new("stage", "", []), Context(), default)).Success);
     }
     [Theory]
-    [InlineData("../outside")][InlineData("docs/../secret")][InlineData("/tmp/secret")][InlineData("docs\\secret")]
+    [InlineData("../outside")]
+    [InlineData("docs/../secret")]
+    [InlineData("/tmp/secret")]
+    [InlineData("docs\\secret")]
     public async Task Malformed_paths_are_rejected_even_with_allow_all_policy(string path)
     {
         var files = new FileChangeService(root, [new AllowAllPolicy()], new Approval());
         await Assert.ThrowsAsync<InvalidDataException>(() => files.ApplyAsync([new(path, "bad")], new(["docs"], [], 100), Context(), "stage", default));
     }
     [Theory]
-    [InlineData("src/Orchestrator.Core/x.cs")][InlineData(".github/workflows/ci.yml")]
+    [InlineData("src/Orchestrator.Core/x.cs")]
+    [InlineData(".github/workflows/ci.yml")]
     public async Task Role_boundary_violations_are_policy_violations_even_with_allow_all_policy(string path)
     {
         var files = new FileChangeService(root, [new AllowAllPolicy()], new Approval());
@@ -106,7 +130,8 @@ public sealed class AgentTests : IDisposable
         Assert.False(File.Exists(Path.Combine(root, "docs/test.md")));
     }
     [Theory]
-    [InlineData(true)][InlineData(false)]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task RequireApproval_is_honored(bool approved)
     {
         var approval = new Approval(approved);
