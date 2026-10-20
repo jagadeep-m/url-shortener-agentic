@@ -134,7 +134,8 @@ public sealed class LiveModeTests : IDisposable
 
         Assert.True(result.Success);
         var files = client.User[0].GetProperty("currentFiles").EnumerateArray().ToArray();
-        Assert.Equal("src/UrlShortener.Domain/ShortLink.cs", files.Single().GetProperty("path").GetString());
+        // The named file first, then the rest of the product source (a design may name no files at all).
+        Assert.Equal(new[] { "src/UrlShortener.Domain/ShortLink.cs", "src/UrlShortener.Api/LinkEndpoints.cs" }, files.Select(f => f.GetProperty("path").GetString()));
         Assert.Contains("complete new content", client.System[0]);
         Assert.Equal(12288, new ArchitectAgent(client).Boundary.MaxTokens); // 6,144 was cut off in the first live run
         Assert.DoesNotContain(Path.GetFullPath(root), client.User[0].GetRawText());

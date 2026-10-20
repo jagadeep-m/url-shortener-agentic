@@ -8,7 +8,10 @@ namespace Orchestrator.Agents;
 // Logs go to <logName>.build.log and <logName>.test.log. With no test projects, the solution's tests run.
 public sealed class DotnetValidationRunner(string workspace, IReadOnlyList<string>? testProjects = null) : IValidationRunner
 {
-    public async Task<GateResult> ValidateAsync(string runDirectory, string logName, CancellationToken ct)
+    public Task<GateResult> ValidateAsync(string runDirectory, string logName, CancellationToken ct) =>
+        ValidateAsync(runDirectory, logName, [], ct);
+
+    public async Task<GateResult> ValidateAsync(string runDirectory, string logName, IReadOnlyCollection<string> tolerateFailuresIn, CancellationToken ct)
     {
         var build = await RunAsync("build", null, ct);
         await File.WriteAllTextAsync(Path.Combine(runDirectory, $"{logName}.build.log"), build.Output, ct);
@@ -23,10 +26,22 @@ public sealed class DotnetValidationRunner(string workspace, IReadOnlyList<strin
             failed |= test.ExitCode != 0;
         }
         await File.WriteAllTextAsync(Path.Combine(runDirectory, $"{logName}.test.log"), output.ToString(), ct);
-        var summary = DotnetOutput.TestSummary(output.ToString());
-        if (failed) return GateResult.Block($"dotnet test failed: {summary.Text} (see {logName}.test.log).");
+        return Judge(failed, output.ToString(), tolerateFailuresIn, logName);
+    }
+
+    // Pure decision over the test output, so it is testable without running dotnet.
+    public static GateResult Judge(bool failed, string output, IReadOnlyCollection<string> tolerateFailuresIn, string logName)
+    {
+        var summary = DotnetOutput.TestSummary(output);
         if (summary.Total == 0) return GateResult.Block($"dotnet test reported no results (see {logName}.test.log).");
-        return GateResult.Pass($"dotnet build succeeded; dotnet test: {summary.Text}.");
+        if (!failed) return GateResult.Pass($"dotnet build succeeded; dotnet test: {summary.Text}.");
+        var details = DotnetOutput.FailureDetails(output);
+        var onlyNewTestsFail = tolerateFailuresIn.Count > 0 && summary.Failed > 0 && summary.FailingTests.Count == summary.Failed
+            && summary.FailingTests.All(test => tolerateFailuresIn.Any(type => test.Contains($".{type}.", StringComparison.Ordinal)));
+        if (onlyNewTestsFail)
+            return GateResult.Pass($"dotnet build succeeded and every existing test passes; {summary.Failed} new test(s) in "
+                + $"{string.Join(", ", tolerateFailuresIn)} fail against the current code (red), so validation will decide. First failures: {details}");
+        return GateResult.Block($"dotnet test failed: {summary.Text}. First failures: {details} (see {logName}.test.log).");
     }
 
     private async Task<(int ExitCode, string Output)> RunAsync(string command, string? project, CancellationToken ct)
@@ -58,7 +73,7 @@ public sealed record TestSummary(int Passed, int Failed, int Skipped, IReadOnlyL
 {
     public int Total => Passed + Failed + Skipped;
     public string Text => $"{Passed} passed, {Failed} failed, {Skipped} skipped"
-        + (FailingTests.Count > 0 ? "; failing: " + string.Join(", ", FailingTests) : "");
+        + (FailingTests.Count > 0 ? "; failing: " + string.Join(", ", FailingTests.Take(5)) + (FailingTests.Count > 5 ? $" and {FailingTests.Count - 5} more" : "") : "");
 }
 
 // Parses dotnet CLI output so gate reasons (and retry prompts) carry concrete evidence.
@@ -73,8 +88,21 @@ public static class DotnetOutput
             passed += int.Parse(m.Groups[2].Value);
             skipped += int.Parse(m.Groups[3].Value);
         }
-        var failing = Regex.Matches(output, @"^\s*Failed (\S+) \[", RegexOptions.Multiline).Select(m => m.Groups[1].Value).Distinct().Take(5).ToArray();
+        var failing = Regex.Matches(output, @"^\s*Failed (.+?) \[[^\]\r\n]*\]\s*$", RegexOptions.Multiline).Select(m => m.Groups[1].Value).Distinct().ToArray();
         return new(passed, failed, skipped, failing);
+    }
+
+    // The first failing tests with their assertion messages, so retries and reworks get concrete feedback.
+    public static string FailureDetails(string output, int max = 3)
+    {
+        var blocks = Regex.Matches(output, @"^\s*Failed (.+?) \[[^\]\r\n]*\]\s*$\s*Error Message:\s*(.*?)(?=^\s*Stack Trace:|^\s*Failed |\z)",
+            RegexOptions.Multiline | RegexOptions.Singleline);
+        var parts = blocks.Take(max).Select(m =>
+        {
+            var message = Regex.Replace(m.Groups[2].Value, @"\s+", " ").Trim();
+            return $"{m.Groups[1].Value}: {(message.Length > 300 ? message[..300] + "..." : message)}";
+        }).ToArray();
+        return parts.Length > 0 ? string.Join("; ", parts) : "see log";
     }
 
     public static string BuildErrors(string output)

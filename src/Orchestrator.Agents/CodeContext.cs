@@ -20,15 +20,21 @@ public sealed partial class CodeContext(string workspace, IReadOnlyList<string>?
     public string Outline() => Redact(CodebaseIndex.Build(root, productRoots).Outline());
 
     // Files are chosen in priority order: role defaults, then files named by path, then files declaring a type the
-    // texts mention by name (a design that says "change LinkService" names no path). Within each group, alphabetical.
-    public IReadOnlyList<FileSnapshot> RelevantFiles(IEnumerable<string> texts, IEnumerable<string>? alwaysInclude = null)
+    // texts mention by name (a design that says "change LinkService" names no path), then, when asked, the rest of
+    // the product source (generated migrations excluded) until the budget is used. Within each group, alphabetical.
+    // A live design once named no existing code at all, and the Coder could not wire its new class in.
+    public IReadOnlyList<FileSnapshot> RelevantFiles(IEnumerable<string> texts, IEnumerable<string>? alwaysInclude = null, bool includeProductSource = false)
     {
         var all = string.Join("\n", texts.Select(t => t ?? ""));
+        var index = CodebaseIndex.Build(root, productRoots);
         var byPath = ProductPath().Matches(all).Select(m => m.Value.TrimEnd('.')).Order(StringComparer.Ordinal);
-        var byType = CodebaseIndex.Build(root, productRoots).DeclaringFiles
+        var byType = index.DeclaringFiles
             .Where(type => Regex.IsMatch(all, $@"\b{Regex.Escape(type.Key)}\b"))
             .SelectMany(type => type.Value).Order(StringComparer.Ordinal);
-        var named = (alwaysInclude ?? []).Concat(byPath).Concat(byType).Distinct(StringComparer.Ordinal);
+        var rest = includeProductSource
+            ? index.FilePaths.Where(p => p.StartsWith("src/", StringComparison.Ordinal) && !p.Contains("/Migrations/", StringComparison.Ordinal)).Order(StringComparer.Ordinal)
+            : Enumerable.Empty<string>();
+        var named = (alwaysInclude ?? []).Concat(byPath).Concat(byType).Concat(rest).Distinct(StringComparer.Ordinal);
         var result = new List<FileSnapshot>();
         var total = 0;
         foreach (var path in named)

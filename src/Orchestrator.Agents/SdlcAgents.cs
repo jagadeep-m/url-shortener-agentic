@@ -31,6 +31,9 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
     // Code-writing roles must change at least one file: an empty answer (for example "I cannot see the code") fails
     // the attempt with the model's own explanation as feedback, instead of passing the gate with nothing done.
     protected virtual bool RequiresFiles => false;
+    // Roles that design, write, test or review code see the whole product source (within the context budget), so they
+    // never depend on an upstream artifact having named the right files.
+    protected virtual bool WholeProductSource => false;
 
     protected virtual string OutputContract => "Return only JSON: {\"summary\":\"...\",\"rationale\":\"...\",\"content\":\"markdown artifact\",\"files\":[{\"path\":\"relative/path\",\"content\":\"full file text\"}]}. ";
     public abstract string Role { get; }
@@ -73,7 +76,7 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
         if (Code is null) return payload;
         if (Needs.HasFlag(CodeNeeds.Outline)) payload["codebaseOutline"] = Code.Outline();
         if (Needs.HasFlag(CodeNeeds.Files))
-            payload["currentFiles"] = Code.RelevantFiles(ctx.Artifacts.Values.Select(a => a.Content).Concat(task.Inputs.Select(i => i.Content)).Append(ctx.Requirement), AlwaysInclude);
+            payload["currentFiles"] = Code.RelevantFiles(ctx.Artifacts.Values.Select(a => a.Content).Concat(task.Inputs.Select(i => i.Content)).Append(ctx.Requirement), AlwaysInclude, WholeProductSource);
         return payload;
     }
 
@@ -119,15 +122,18 @@ public sealed class ArchitectAgent(IChatClient client) : SdlcAgent(client)
     // Designs that cite the current code run long; 6,144 tokens was cut off in the first live run.
     public override AutonomyBoundary Boundary => new([], [], 12288);
     protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
+    protected override bool WholeProductSource => true;
 }
 public sealed class CoderAgent(IChatClient client) : SdlcAgent(client)
 {
     public override string Role => "Coder";
     public override string RolePrompt => "Implement the approved design in the existing code (current files are provided). For every file you change or add, return its "
         + "complete new content in files[], never a fragment or a diff, and keep all existing behaviour you were not asked to change. "
-        + "The code must compile and the existing tests must still pass. " + EngineeringRules;
+        + "Connect new code into the existing flow so the requirement is actually met (for example, call it from the service that handles the request); "
+        + "code that nothing calls does not meet a requirement. The code must compile and the existing tests must still pass. " + EngineeringRules;
     public override AutonomyBoundary Boundary => new(["src/UrlShortener.*"], ["FileChangeService", "CodeContext"], 16384);
     protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
+    protected override bool WholeProductSource => true;
     protected override bool RequiresFiles => true;
     // There is no safe deterministic code; after retries and the simplified prompt the stage fails.
     public override AgentResult? CreateTemplate(AgentTask task, RunContext ctx) => null;
@@ -140,6 +146,7 @@ public sealed class TesterAgent(IChatClient client) : SdlcAgent(client)
         + "Add new test files instead of rewriting existing ones, and return complete files. Never claim tests passed; the host runs them. " + EngineeringRules;
     public override AutonomyBoundary Boundary => new(["tests/UrlShortener.*"], ["FileChangeService", "CodeContext"], 12288);
     protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
+    protected override bool WholeProductSource => true;
     protected override bool RequiresFiles => true;
     // The test fixture and the API contract, so HTTP tests send the real request shape (a live Tester once guessed "url" for "longUrl").
     protected override IReadOnlyList<string> AlwaysInclude =>
@@ -162,6 +169,7 @@ public sealed class ReviewerAgent(IChatClient client) : SdlcAgent(client)
         + "then any gaps or risks. Code that exists but is never called does not meet a requirement. Build and test results are supplied by the host; do not invent them. "
         + "End the content with a line 'Verdict: PASS' only if every requirement is met by working, called code and by tests; otherwise 'Verdict: FAIL' followed by the specific changes needed.";
     protected override CodeNeeds Needs => CodeNeeds.Files;
+    protected override bool WholeProductSource => true;
     protected override AgentDocument Interpret(string json, AgentTask task, RunContext ctx)
     {
         var document = AgentDocument.Parse(json);

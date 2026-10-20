@@ -125,6 +125,13 @@ flowchart TD
   marks the reviewed stages stale, with the findings as their re-plan reason, refreshes anything
   after them, and reviews again (`rework`). At most one rework cycle runs; a second FAIL fails the
   run. A failed review is reworked, not retried, since repeating the same review cannot fix the code.
+- **Red tests and validation rework:** new tests describe the requirement, so they may fail against
+  code that does not meet it yet. At the tests gate, failures confined to test classes in files the
+  Tester created may land "red" if the build and every existing test pass; anything else is retried
+  as before. The validate gate runs the full build and test suite; if it fails, the engine reworks
+  implement, tests and docs (the same one rework cycle as a FAIL review) with the failing tests and
+  their assertion messages as feedback, instead of blaming the tests. Gate reasons include the first
+  failing tests with their messages.
 - **Release recommendation:** the Release agent must state `Recommendation: READY` or
   `NOT READY`. It's shown as `[READY]` or `[NOT READY]` at the start of the summary in the release
   prompt; the decision stays with the human.
@@ -227,8 +234,11 @@ scenarios). A real model cannot change code it has never seen, so every agent sh
   2. product files named by path anywhere in the run's accepted artifacts
   3. files declaring a type the artifacts mention by name (a design that says "change LinkService"
      names no path)
+  4. for the code roles (Architect, Coder, Tester, Reviewer): the rest of the product source under
+     `src/`, without migrations, so a design that names nothing still shows where new code must be
+     called from
 
-  Given to the Architect, Coder, Tester, Docs and Reviewer.
+  Given to the Architect, Coder, Tester, Docs and Reviewer, until the size budget runs out.
 
 The Coder and Tester must return at least one file. An empty answer fails the attempt, with the
 model's own explanation as retry feedback, instead of passing the gate with nothing done.

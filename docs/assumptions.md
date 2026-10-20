@@ -238,3 +238,13 @@
   and Docs re-run with the findings. The Release agent must state READY or NOT READY.
 - Rework is bounded to one cycle (`StageExecutor.MaxReworks`) to cap cost and avoid endless
   review loops; the human can still resume a failed run after changing the requirement or design.
+- The third live greenfield run (`67cdd834…`) failed safely: the design named no files, the Coder
+  again wrote an unconnected normalizer, and the Tester's correct tests were retried and rolled back
+  as if they were wrong. Two fixes, with tests:
+  - Code roles (Architect, Coder, Tester, Reviewer) see the whole product source (without tests and
+    migrations), within the 120,000-character budget; named files come first. The product is small
+    enough for this; a larger one would need retrieval instead.
+  - Tests may land red: at the tests gate, failures only in test classes the Tester newly created
+    are allowed when the build and all existing tests pass. Validation then runs everything, and a
+    failure there reworks implement, tests and docs once with the failure details. Edited existing
+    test classes are not tolerated, so the Tester cannot weaken existing tests to get through.

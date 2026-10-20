@@ -7,6 +7,11 @@ public interface IValidationRunner
 {
     // logName identifies the stage attempt, e.g. "tests.attempt2", so retries keep separate evidence.
     Task<GateResult> ValidateAsync(string runDirectory, string logName, CancellationToken ct);
+
+    // Failures confined to these (new) test classes are tolerated, "red", provided the build and every other test pass.
+    // Runners that cannot tell tests apart fall back to the strict check.
+    Task<GateResult> ValidateAsync(string runDirectory, string logName, IReadOnlyCollection<string> tolerateFailuresIn, CancellationToken ct) =>
+        ValidateAsync(runDirectory, logName, ct);
 }
 
 public sealed class AgentStage(StageDefinition definition, IAgent agent, FileChangeService files,
@@ -91,15 +96,20 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
     }
 
     // Stages that change C# sources, and the Reviewer, must pass a real dotnet build and dotnet test.
+    // The Tester's brand-new test classes may be red (they can be right and the code wrong); the Reviewer's full run
+    // decides, and a failure there sends the work back for rework rather than repeating the same review.
     public async Task<GateResult> CheckExitAsync(RunContext ctx, StageOutput output, CancellationToken ct)
     {
         var document = AgentDocument.Parse(output.Artifact.Content);
+        var newTestClasses = agent.Role == "Tester" ? NewTestClasses(document) : [];
         await files.ApplyAsync(document.Files, agent.Boundary, ctx, Id, ct);
         var reason = "Agent JSON and file boundaries validated.";
         var changesCode = document.Files.Any(f => f.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || f.Path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
         if (changesCode || agent.Role == "Reviewer")
         {
-            var result = await validation.ValidateAsync(DirectoryFor(ctx), $"{Id}.attempt{ctx.StageStatuses[Id].Attempts}", ct);
+            var result = await validation.ValidateAsync(DirectoryFor(ctx), $"{Id}.attempt{ctx.StageStatuses[Id].Attempts}", newTestClasses, ct);
+            if (!result.Passed && agent.Role == "Reviewer")
+                throw new ReworkRequestedException($"The full build and test run failed at validation: {result.Reason}");
             if (!result.Passed) return result;
             await audit.WriteAsync(ctx.RunId, "validation_passed", definition, message: result.Reason, ct: ct);
             reason = result.Reason;
@@ -114,4 +124,10 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
         await File.WriteAllTextAsync(ResultPath(ctx), JsonSerializer.Serialize(new AgentResult(true, output), AgentDocument.Json), ct);
         return GateResult.Pass(reason);
     }
+
+    // Classes declared in test files this answer creates (not ones it edits): only these may land red.
+    private string[] NewTestClasses(AgentDocument document) => document.Files
+        .Where(f => f.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && !files.Exists(f.Path))
+        .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(f.Content, @"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)").Select(m => m.Groups[1].Value))
+        .Distinct(StringComparer.Ordinal).ToArray();
 }
