@@ -10,6 +10,16 @@ public sealed record AgentDocument(string Summary, string Rationale, string Cont
     {
         WriteIndented = true, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
+    // Models sometimes wrap JSON in a markdown fence (```json ... ```); the fence is removed before parsing.
+    public static string Unwrap(string text)
+    {
+        var trimmed = text.Trim();
+        if (!trimmed.StartsWith("```", StringComparison.Ordinal)) return text;
+        var start = trimmed.IndexOf('\n');
+        var end = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+        return start < 0 || end <= start ? text : trimmed[(start + 1)..end].Trim();
+    }
+
     public static AgentDocument Parse(string json)
     {
         var result = JsonSerializer.Deserialize<AgentDocument>(json, Json) ?? throw new InvalidDataException("Agent JSON is null.");

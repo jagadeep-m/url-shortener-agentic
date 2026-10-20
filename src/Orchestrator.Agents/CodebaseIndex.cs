@@ -124,6 +124,19 @@ public sealed class CodebaseIndex
     private static string? Literal(ArgumentSyntax? argument) =>
         argument?.Expression is LiteralExpressionSyntax literal && literal.IsKind(SyntaxKind.StringLiteralExpression) ? literal.Token.ValueText : null;
 
+    // A compact map of the code for planning agents: each file's types and members, the endpoints and the tables.
+    public string Outline(int maxChars = 20_000)
+    {
+        var text = new StringBuilder("Source files (types and members):\n");
+        foreach (var file in files.Where(f => !f.IsTest))
+            text.Append("- ").Append(file.Path).Append(": ")
+                .AppendJoin("; ", file.Types.Select(t => t.Value.Count == 0 ? t.Key : $"{t.Key} {{ {string.Join(", ", t.Value.Order())} }}")).Append('\n');
+        text.Append("\nEndpoints:\n").AppendJoin("", endpoints.Select(e => $"- {e.Method} {e.Route} ({e.File})\n"));
+        text.Append("\nTables:\n").AppendJoin("", tables.Select(t => $"- {t.Value} (entity {t.Key})\n"));
+        text.Append("\nTest files:\n").AppendJoin("", files.Where(f => f.IsTest).Select(f => $"- {f.Path}: {string.Join(", ", f.Types.Keys)}\n"));
+        return text.Length <= maxChars ? text.ToString() : text.ToString(0, maxChars) + "\n... (outline truncated)\n";
+    }
+
     // Seeds are "Type" or "Type.Member". Types widen the impact to every user of the type; members
     // narrow endpoint and test impact to code that calls that member.
     public ImpactReport Analyze(IReadOnlyList<string> seeds)

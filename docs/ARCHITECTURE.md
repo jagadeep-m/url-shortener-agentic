@@ -73,6 +73,7 @@ dependencies and bad budgets are rejected before anything runs.
 | greenfield | requirements → design → {implement ‖ tests ‖ docs} → validate → release |
 | brownfield | requirements → impact → design → {implement ‖ docs}; implement → tests; → validate → release |
 | ambiguous | clarify → requirements → design → docs → validate → release |
+| feature (live only) | the brownfield graph, with the requirement given on the command line (`--requirement "..."`) |
 
 **Scheduling.** The engine runs in waves: every stage whose dependencies are complete starts at
 once, and the wave is awaited with `Task.WhenAll`; validate is the join (ADR 0005). Model calls run
@@ -200,6 +201,25 @@ cumulative and charged from model usage. Exceeding either pauses the run cleanly
     (scripted failures), then `<stage>.json`
   - a recording may hold prompt-matched variants, so replays follow human answers
   - no network and no key; a missing recording is an error, never a silent live call (ADR 0004)
+
+**Live mode and code context.** For a new requirement, `run scenarios/feature.yaml --requirement "..."`
+replaces the scenario's requirement (replay is refused, because it only knows the recorded demo
+scenarios). A real model cannot change code it has never seen, so every agent shares a read-only
+`CodeContext`, and each role declares what it needs (`SdlcAgent.Needs`):
+- **Outline** (files, types, members, endpoints, tables; built from Roslyn syntax trees): the
+  ImpactAnalyst and Architect, so seeds and designs name real types.
+- **Current files** (full contents of the existing product files named anywhere in the run's
+  accepted artifacts, plus role defaults such as `ApiFactory.cs` for the Tester): the Architect,
+  Coder, Tester, Docs and Reviewer.
+
+Reads are limited to product roots, with no `..` and no `bin`/`obj`, each file is capped at 24,000
+characters and the total at 120,000. The workspace's absolute path is replaced with `<workspace>` in
+everything sent, including failure feedback. Agents still write only through `FileChangeService`.
+Role prompts state the project's conventions (stack, layering, UTC, ProblemDetails, no new packages,
+how to write a migration and its snapshot). The live client explains setup errors (401, 404, 429,
+with the provider's message), reports answers cut off at the output limit, and accepts JSON
+wrapped in markdown fences. The model name is recorded in `plan.json`, the audit log
+(`agent_requested`) and `report.md`.
 
 ## 8. URL shortener
 

@@ -55,7 +55,7 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
     private async Task<StageOutput> RunAgentAsync(RunContext ctx, bool simplified, CancellationToken ct)
     {
         var task = CreateTask(ctx, simplified);
-        await audit.WriteAsync(ctx.RunId, "agent_requested", definition, message: agent.Role + (simplified ? " (simplified prompt)" : ""), ct: ct,
+        await audit.WriteAsync(ctx.RunId, "agent_requested", definition, message: agent.Role + (ctx.Scenario.Model is { } model ? $" via {model}" : "") + (simplified ? " (simplified prompt)" : ""), ct: ct,
             promptHash: Artifact.Hash(JsonSerializer.Serialize(task, AgentDocument.Json)));
         return await SaveDraftAsync(ctx, await agent.RunAsync(task, ctx, ct), ct);
     }

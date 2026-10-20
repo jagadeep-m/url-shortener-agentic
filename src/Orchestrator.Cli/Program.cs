@@ -24,43 +24,41 @@ public static class Program
     }
     private static async Task<int> ExecuteAsync(string[] args)
     {
-        if (args.Length < 2 || args[0] is not ("run" or "resume" or "report" or "stop"))
-        {
-            AnsiConsole.WriteLine("Usage: run <scenario.yaml> [--replay] [--auto-approve] | resume <runId> | report <runId> [--lineage] | stop <runId>");
-            return 1;
-        }
-        string[] allowed = args[0] switch { "run" => ["--replay", "--auto-approve"], "report" => ["--lineage"], _ => [] };
-        if (args.Skip(2).Any(a => !allowed.Contains(a))) throw new ArgumentException("Unknown command option.");
+        var command = CommandLine.Parse(args);
         var workspace = Directory.GetCurrentDirectory();
         if (!File.Exists(Path.Combine(workspace, "UrlShortenerAgentic.sln"))) throw new InvalidOperationException("Run the CLI from the solution root.");
         var runs = Path.Combine(workspace, "runs");
         var store = new SqliteRunStateStore(runs);
         RunContext? saved = null;
-        if (args[0] != "run") saved = await store.LoadAsync(Guid.Parse(args[1])) ?? throw new KeyNotFoundException("Run not found.");
-        if (args[0] == "report")
+        if (command.Command != "run") saved = await store.LoadAsync(Guid.Parse(command.Target)) ?? throw new KeyNotFoundException("Run not found.");
+        if (command.Command == "report")
         {
-            if (args.Contains("--lineage")) AnsiConsole.Write(new Text(LineageReport.Render(saved!)));
+            if (command.Lineage) AnsiConsole.Write(new Text(LineageReport.Render(saved!)));
             AnsiConsole.WriteLine(await RunReport.WriteAsync(saved!, runs));
             return 0;
         }
-        if (args[0] == "stop")
+        if (command.Command == "stop")
         {
             if (saved!.Status == RunStatus.Completed) throw new InvalidOperationException("Run is already completed.");
             await File.WriteAllTextAsync(Path.Combine(runs, saved.RunId.ToString("D"), "stop.request"), DateTime.UtcNow.ToString("O"));
             AnsiConsole.WriteLine("Stop requested. An active CLI observes it and saves a resumable checkpoint.");
             return 0;
         }
-        var scenario = saved?.Scenario ?? await new ScenarioLoader().LoadAsync(args[1]);
+        var scenario = saved?.Scenario ?? await new ScenarioLoader().LoadAsync(command.Target);
         if (saved is null)
         {
-            scenario.Name = Path.GetFileNameWithoutExtension(args[1]);
-            scenario.Replay = args.Contains("--replay");
+            scenario.Name = Path.GetFileNameWithoutExtension(command.Target);
+            scenario.Replay = command.Replay;
+            if (command.Requirement is not null) scenario.Requirement = command.Requirement;
+            if (string.IsNullOrWhiteSpace(scenario.Requirement))
+                throw new ArgumentException($"Scenario '{scenario.Name}' has no requirement; pass one with --requirement \"...\".");
         }
-        var autoApprove = args.Contains("--auto-approve");
+        var autoApprove = command.AutoApprove;
         if (autoApprove && !string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("--auto-approve is restricted to tests/CI (CI=true).");
         // Replay never loads user-secrets or creates an HTTP client.
         var configuration = scenario.Replay ? new ConfigurationBuilder().Build() : ChatClientRegistration.LoadConfiguration();
+        if (saved is null && !scenario.Replay) scenario.Model = configuration["LLM:Model"];
         using var services = new ServiceCollection().AddScenarioChatClient(scenario, workspace, configuration).BuildServiceProvider();
         var client = services.GetRequiredService<IChatClient>();
         var approvals = new ConsoleApprovalService(autoApprove);
@@ -86,7 +84,7 @@ public static class Program
                     initialized = true;
                 }
                 File.Delete(Path.Combine(runs, id.ToString("D"), "stop.request"));
-                AnsiConsole.WriteLine($"Run: {id} ({(scenario.Replay ? "replay" : "live")})");
+                AnsiConsole.WriteLine($"Run: {id} ({(scenario.Replay ? "replay" : $"live, model {scenario.Model}")})");
                 monitor = MonitorStopAsync(runs, id, stop, monitorStop.Token);
             }
             var agents = StageFactory.Agents(client, workspace);

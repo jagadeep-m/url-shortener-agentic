@@ -6,6 +6,9 @@ public sealed class Scenario
     public string Requirement { get; set; } = "Build the URL shortener described in the project specification.";
     [YamlDotNet.Serialization.YamlIgnore]
     public bool Replay { get; set; }
+    // The live model used for this run (null in replay); recorded in the plan, the audit log and the report.
+    [YamlDotNet.Serialization.YamlIgnore]
+    public string? Model { get; set; }
     public List<StageDefinition> Stages { get; set; } = [];
     public RetryOptions Retry { get; set; } = new();
     public RunBudget Budget { get; set; } = new();

@@ -13,7 +13,9 @@ public sealed class ImpactAnalystAgent(IChatClient client, string workspace) : S
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     public override string Role => "ImpactAnalyst";
-    public override string RolePrompt => "Identify where the approved change lands in the existing codebase. Name the C# types and members (Type or Type.Member) that must change and the main risks. Do not design or implement.";
+    public override string RolePrompt => "Identify where the approved change lands in the existing codebase, using the codebase outline provided. Name the C# types and members "
+        + "(Type or Type.Member) that must change, choosing names that exist in the outline, and list the main risks. Do not design or implement.";
+    protected override CodeNeeds Needs => CodeNeeds.Outline;
     public override AutonomyBoundary Boundary => new([], ["CodebaseIndex"], 4096);
     protected override string OutputContract => "Return only JSON: {\"summary\":\"...\",\"rationale\":\"...\",\"seeds\":[\"Type\",\"Type.Member\"],\"risks\":[\"...\"]}. ";
 

@@ -5,11 +5,17 @@ namespace Orchestrator.Agents;
 
 public static class StageFactory
 {
-    public static IAgent[] Agents(IChatClient client, string workspace) =>
-    [
-        new RequirementsAgent(client), new ClarifierAgent(client), new ImpactAnalystAgent(client, workspace), new ArchitectAgent(client),
-        new CoderAgent(client), new TesterAgent(client), new DocsAgent(client), new ReviewerAgent(client), new ReleaseAgent(client)
-    ];
+    // Every agent gets the same read-only CodeContext; each role decides what it needs from it (SdlcAgent.Needs).
+    public static IAgent[] Agents(IChatClient client, string workspace)
+    {
+        var code = new CodeContext(workspace);
+        return
+        [
+            new RequirementsAgent(client) { Code = code }, new ClarifierAgent(client) { Code = code }, new ImpactAnalystAgent(client, workspace) { Code = code },
+            new ArchitectAgent(client) { Code = code }, new CoderAgent(client) { Code = code }, new TesterAgent(client) { Code = code },
+            new DocsAgent(client) { Code = code }, new ReviewerAgent(client) { Code = code }, new ReleaseAgent(client) { Code = code }
+        ];
+    }
 
     // The scenario names the agent; the Clarifier gets the open-questions stage, every other role an AgentStage.
     public static IStage Create(StageDefinition definition, IReadOnlyList<IAgent> agents, FileChangeService files, string runsDirectory,

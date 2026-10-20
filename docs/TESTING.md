@@ -5,7 +5,7 @@ dotnet build
 dotnet test
 ```
 
-204 tests, about 5 seconds, no network, no external database. Each test uses its own temporary
+218 tests, about 5 seconds, no network, no external database. Each test uses its own temporary
 SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
 Requires the .NET 8 runtimes (see the README).
 
@@ -42,7 +42,7 @@ Requires the .NET 8 runtimes (see the README).
 - RateLimitTests: per-IP 429 with `Retry-After`
 - ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
 
-**Orchestrator.Tests (120)**
+**Orchestrator.Tests (134)**
 
 | Class | Covers |
 | --- | --- |
@@ -57,6 +57,7 @@ Requires the .NET 8 runtimes (see the README).
 | MetricsTests | success rate, retry rate, MTTR, human wait, machine time and per-stage latency from a hand-written audit log; aggregates; live Meter instruments; report and lineage rendering |
 | CodebaseIndexTests | Roslyn endpoints with group prefixes, table mappings, affected files/endpoints/tables/tests, unknown seeds; indexes the real solution |
 | OpenQuestionsTests | answer normalisation, canonical round-trip, the 2–3 interpretation rule |
+| LiveModeTests | `--requirement` parsing and its refusal with `--replay`; `feature.yaml` graph; code context (only named, existing product files; no traversal or build output; size and budget caps; absolute paths redacted; outline content); what each role is shown; the provider client against a fake server (reply, usage, served model, request shape, 401/404/429 explanations with the provider's message, cut-off answers); fenced JSON; the model named in the report |
 | ScenarioReplayTests | brownfield on real git (impact report, migration approval twice, rollback, `diff.patch`); ambiguous (answers as decisions, mid-run answer change re-plans, unanswered questions block) |
 
 Every orchestrator mechanism (gates, approvals, retries, fallback, rollback, safe-stop,
@@ -90,19 +91,19 @@ dotnet test --collect "Code Coverage;Format=cobertura" --results-directory ./Tes
 ```
 
 Line and branch coverage of the solution's assemblies, excluding EF-generated migration code
-(measured on 2026-10-18):
+(measured on 2026-10-19):
 
 | Assembly | Line | Branch |
 | --- | --- | --- |
 | UrlShortener.Domain | 100.0% (75/75) | 100.0% |
 | UrlShortener.Application | 100.0% (71/71) | 100.0% |
 | UrlShortener.Infrastructure | 96.9% (154/159) | 85.3% |
-| UrlShortener.Api | 96.7% (148/153) | 83.8% |
-| Orchestrator.Core | 98.0% (949/968) | 89.6% |
-| Orchestrator.Agents | 86.7% (561/647) | 80.4% |
+| UrlShortener.Api | 97.4% (189/194) | 84.4% |
+| Orchestrator.Core | 98.0% (950/969) | 90.0% |
+| Orchestrator.Agents | 92.3% (693/751) | 82.6% |
 | Orchestrator.Policies | 75.5% (111/147) | 81.9% |
-| Orchestrator.Cli | 46.1% (111/241) | 37.4% |
-| **Total** | **88.6% (2,180/2,461)** | **81.0%** |
+| Orchestrator.Cli | 50.4% (132/262) | 48.0% |
+| **Total** | **90.4% (2,375/2,628)** | **82.7%** |
 
 Known gaps:
 - `Orchestrator.Cli` `Main` (argument parsing, wiring, stop polling) is exercised by the

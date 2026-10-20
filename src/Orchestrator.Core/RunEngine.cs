@@ -226,7 +226,7 @@ public sealed class RunEngine
         foreach (var stage in ordered) waves[stage.Id] = stage.DependsOn.Count == 0 ? 1 : stage.DependsOn.Max(id => waves[id]) + 1;
         var plan = new
         {
-            context.RunId, Scenario = context.Scenario.Name, context.Scenario.Replay, context.Requirement,
+            context.RunId, Scenario = context.Scenario.Name, context.Scenario.Replay, context.Scenario.Model, context.Requirement,
             context.Budget.MaxMinutes, context.Budget.MaxTokens, context.Scenario.Retry,
             Stages = ordered.Select(s => new { s.Id, s.Agent, s.DependsOn, s.Risk, Wave = waves[s.Id], Retry = s.Retry ?? context.Scenario.Retry })
         };

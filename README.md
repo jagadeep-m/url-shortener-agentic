@@ -155,7 +155,32 @@ dotnet run --project src/Orchestrator.Cli -- run scenarios/greenfield.yaml
 ```
 
 The same gates, policies, approvals and budgets (20 minutes, 400,000 tokens per run by default)
-apply. Model output varies, so live runs may need more retries than the replays.
+apply. Model output varies, so live runs may need more retries than the replays. The run header and
+`report.md` name the model that was used.
+
+### Request a new feature in plain English (live mode)
+
+`scenarios/feature.yaml` runs any requirement you type through the full lifecycle: requirements →
+impact analysis → design → implement ‖ docs → tests → validate → release.
+
+```bash
+dotnet run --project src/Orchestrator.Cli -- run scenarios/feature.yaml --requirement "Add an endpoint that returns a QR code for a short link"
+```
+
+- **Needs a real model.** Replay only knows the three recorded demo scenarios, so `--requirement`
+  with `--replay` is refused.
+- **Agents see the code they change.** Planning agents get an outline of the codebase. The
+  Architect, Coder, Tester, Docs and Reviewer agents get the current contents of the files the run
+  names (for example in the impact report), read-only and size-capped. Your machine's absolute path
+  is replaced with `<workspace>` before anything is sent.
+- **Every safeguard still applies.** You approve requirements, impact, design, any migration and
+  release. Real `dotnet build` / `dotnet test` gates judge the code, failures are rolled back and
+  retried, and everything is audited.
+- **The result is on a branch.** The feature lands on `agent/run-<runId>`. Review
+  `runs/<runId>/report.md` and `diff.patch`, then merge it into `main` yourself if you want it:
+  `git merge agent/run-<runId>`.
+- **Cost:** with a small model, a full run is typically a few cents. The budget (`maxTokens` in
+  `feature.yaml`) caps it.
 
 ## Tests
 
@@ -163,7 +188,7 @@ apply. Model output varies, so live runs may need more retries than the replays.
 dotnet test
 ```
 
-204 tests across three projects (Orchestrator.Tests, UrlShortener.UnitTests,
+218 tests across three projects (Orchestrator.Tests, UrlShortener.UnitTests,
 UrlShortener.IntegrationTests). They use temporary SQLite files and git repositories and need no
 network. For coverage (no extra tools; the collector ships with the test SDK):
 

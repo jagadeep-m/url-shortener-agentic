@@ -1,0 +1,45 @@
+# General-purpose scenario: give the requirement in plain English on the command line, in live mode:
+#   dotnet run --project src/Orchestrator.Cli -- run scenarios/feature.yaml --requirement "Add QR codes for short links"
+# The flow follows the brownfield lifecycle: understand -> analyse the existing code -> design -> build and test -> validate -> release.
+name: feature
+requirement: ""
+retry:
+  maxAttempts: 3
+  backoff: exponential
+  baseSeconds: 2
+budget:
+  maxMinutes: 30
+  maxTokens: 400000
+stages:
+  - id: requirements
+    agent: Requirements
+    risk: High
+  - id: impact
+    agent: ImpactAnalyst
+    dependsOn: [requirements]
+    risk: High
+  - id: design
+    agent: Architect
+    dependsOn: [impact]
+    risk: High
+  - id: implement
+    agent: Coder
+    dependsOn: [design]
+    risk: Medium
+  - id: docs
+    agent: Docs
+    dependsOn: [design]
+    risk: Low
+  # Tests exercise the newly implemented code, so they follow implement.
+  - id: tests
+    agent: Tester
+    dependsOn: [implement]
+    risk: Medium
+  - id: validate
+    agent: Reviewer
+    dependsOn: [implement, tests, docs]
+    risk: Medium
+  - id: release
+    agent: Release
+    dependsOn: [validate]
+    risk: High

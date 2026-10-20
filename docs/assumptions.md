@@ -200,3 +200,19 @@
   them directly, but they bring in `Microsoft.Extensions.Configuration`, which reads user-secrets and
   `LLM__*` environment variables. Replacing them with an explicit configuration package is a
   possible later cleanup.
+
+## Live mode for new requirements
+
+- New requirements are given in plain English with `--requirement` on `scenarios/feature.yaml`,
+  which follows the brownfield lifecycle. They need a real model; replay has no answers for them.
+- Agents receive code read-only: an outline, plus the full current contents of the existing product
+  files named in the run's artifacts. A file the design proposes to create is not read (it doesn't
+  exist yet). Very large files and context beyond the overall cap are listed as omitted rather than
+  silently truncated.
+- Context and the token budget interact: file contents are input tokens and count towards
+  `maxTokens`. `feature.yaml` keeps the default 400,000-token budget, which with a small model costs
+  only cents, rather than a lower cap that file context could exhaust.
+- The model name comes from `LLM:Model` at the start of a run and is kept with the run, so a resume
+  reports the model the run started with.
+- Live mode has been tested against a fake provider only. The first real run may reveal
+  provider-specific differences, to be fixed as they appear.

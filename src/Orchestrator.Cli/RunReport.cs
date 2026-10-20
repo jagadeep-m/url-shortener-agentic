@@ -9,7 +9,7 @@ public static class RunReport
     public static async Task<string> WriteAsync(RunContext context, string runsDirectory, CancellationToken ct = default)
     {
         var runDirectory = Path.Combine(runsDirectory, context.RunId.ToString("D"));
-        var text = new StringBuilder($"# Run {context.RunId}\n\nStatus: {context.Status}\n\nScenario: {context.Scenario.Name}\n\nMode: {(context.Scenario.Replay ? "Replay (offline)" : "Live")}\n\nTrace: {context.TraceId}\n\n");
+        var text = new StringBuilder($"# Run {context.RunId}\n\nStatus: {context.Status}\n\nScenario: {context.Scenario.Name}\n\nMode: {(context.Scenario.Replay ? "Replay (offline)" : $"Live (model {context.Scenario.Model ?? "unknown"})")}\n\nTrace: {context.TraceId}\n\n");
         if (context.StopReason is not null) text.AppendLine($"Stop reason: {Cell(context.StopReason)}\n");
         text.AppendLine($"Branch: {Cell(context.GitBranch)} (last good commit {Cell(context.LastGoodCommit)})\n");
 

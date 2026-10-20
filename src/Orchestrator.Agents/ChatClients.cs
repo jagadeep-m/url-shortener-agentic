@@ -77,6 +77,10 @@ public sealed class OpenAiCompatibleChatClient : BufferedChatClient
     private readonly string model;
     private readonly Uri endpoint;
     public OpenAiCompatibleChatClient(string apiKey, string model, string endpoint = "https://api.openai.com/v1/chat/completions")
+        : this(apiKey, model, endpoint, new HttpClientHandler { AllowAutoRedirect = false }) { }
+
+    // The handler is injectable so tests can stand in for the provider without network access.
+    public OpenAiCompatibleChatClient(string apiKey, string model, string endpoint, HttpMessageHandler handler)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
@@ -84,7 +88,7 @@ public sealed class OpenAiCompatibleChatClient : BufferedChatClient
         this.model = model;
         this.endpoint = new Uri(endpoint, UriKind.Absolute);
         if (this.endpoint.Scheme != "https") throw new ArgumentException("LLM endpoint must use HTTPS.");
-        http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(2) };
+        http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(3) };
     }
     public override async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -98,16 +102,49 @@ public sealed class OpenAiCompatibleChatClient : BufferedChatClient
             response_format = new { type = "json_object" }, store = false
         });
         using var response = await http.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode) throw new HttpRequestException($"LLM request failed with HTTP {(int)response.StatusCode}.");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode) throw new HttpRequestException(Explain((int)response.StatusCode, ProviderMessage(raw)));
+        using var body = JsonDocument.Parse(raw);
         var choice = body.RootElement.GetProperty("choices")[0];
-        if (choice.GetProperty("finish_reason").GetString() != "stop") throw new InvalidDataException("LLM output was incomplete or refused.");
+        var finish = choice.TryGetProperty("finish_reason", out var reason) ? reason.GetString() : "stop";
+        if (finish == "length")
+            throw new InvalidDataException($"The model's answer was cut off at the {options?.MaxOutputTokens ?? 4096}-token output limit (finish_reason=length).");
+        if (finish is not ("stop" or null)) throw new InvalidDataException($"The model did not complete its answer (finish_reason={finish}).");
         var text = choice.GetProperty("message").GetProperty("content").GetString();
-        if (string.IsNullOrWhiteSpace(text)) throw new InvalidDataException("LLM returned no JSON content.");
-        var result = new ChatResponse(new ChatMessage(ChatRole.Assistant, text)) { ModelId = model };
+        if (string.IsNullOrWhiteSpace(text)) throw new InvalidDataException("The model returned no content.");
+        var result = new ChatResponse(new ChatMessage(ChatRole.Assistant, text))
+            { ModelId = body.RootElement.TryGetProperty("model", out var id) ? id.GetString() : model };
         if (body.RootElement.TryGetProperty("usage", out var usage))
-            result.Usage = new UsageDetails { InputTokenCount = usage.GetProperty("prompt_tokens").GetInt64(), OutputTokenCount = usage.GetProperty("completion_tokens").GetInt64(), TotalTokenCount = usage.GetProperty("total_tokens").GetInt64() };
+            result.Usage = new UsageDetails { InputTokenCount = Count(usage, "prompt_tokens"), OutputTokenCount = Count(usage, "completion_tokens"), TotalTokenCount = Count(usage, "total_tokens") };
         return result;
     }
+
+    // Actionable messages for the common setup mistakes; the provider's own explanation is appended when present.
+    private string Explain(int status, string? detail)
+    {
+        var hint = status switch
+        {
+            401 => "The API key was rejected. Check LLM:ApiKey.",
+            403 => "The API key may not use this model or endpoint.",
+            404 => $"Model '{model}' or the endpoint was not found. Check LLM:Model and LLM:Endpoint.",
+            429 => "Rate limited or out of credit. Check your provider's billing and limits, then resume the run.",
+            >= 500 => "The provider had a server error; the stage will retry.",
+            _ => "The request was rejected."
+        };
+        return $"LLM request failed with HTTP {status}. {hint}" + (detail is null ? "" : $" Provider says: {detail}");
+    }
+
+    private static string? ProviderMessage(string raw)
+    {
+        try
+        {
+            using var error = JsonDocument.Parse(raw);
+            var message = error.RootElement.GetProperty("error").GetProperty("message").GetString();
+            return message is null ? null : message.Length > 300 ? message[..300] + "..." : message;
+        }
+        catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException) { return null; }
+    }
+
+    private static long? Count(JsonElement usage, string name) => usage.TryGetProperty(name, out var value) && value.TryGetInt64(out var count) ? count : null;
     public override void Dispose() => http.Dispose();
 }
