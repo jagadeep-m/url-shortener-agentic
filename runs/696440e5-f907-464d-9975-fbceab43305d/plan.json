@@ -1,0 +1,114 @@
+{
+  "runId": "696440e5-f907-464d-9975-fbceab43305d",
+  "scenario": "greenfield",
+  "replay": false,
+  "model": "gpt-6-luna",
+  "requirement": "Add a URL normalizer that lowercases the scheme and host, removes default ports, and strips utm_ tracking parameters before a link is saved",
+  "maxMinutes": 20,
+  "maxTokens": 400000,
+  "retry": {
+    "maxAttempts": 3,
+    "backoff": "exponential",
+    "baseSeconds": 2
+  },
+  "stages": [
+    {
+      "id": "requirements",
+      "agent": "Requirements",
+      "dependsOn": [],
+      "risk": "high",
+      "wave": 1,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "design",
+      "agent": "Architect",
+      "dependsOn": [
+        "requirements"
+      ],
+      "risk": "high",
+      "wave": 2,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "implement",
+      "agent": "Coder",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "medium",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "tests",
+      "agent": "Tester",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "medium",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "docs",
+      "agent": "Docs",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "low",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "validate",
+      "agent": "Reviewer",
+      "dependsOn": [
+        "implement",
+        "tests",
+        "docs"
+      ],
+      "risk": "medium",
+      "wave": 4,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "release",
+      "agent": "Release",
+      "dependsOn": [
+        "validate"
+      ],
+      "risk": "high",
+      "wave": 5,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    }
+  ]
+}

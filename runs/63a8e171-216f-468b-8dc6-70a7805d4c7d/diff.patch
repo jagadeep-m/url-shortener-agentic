@@ -1,0 +1,140 @@
+diff --git a/docs/features/url-normalization.md b/docs/features/url-normalization.md
+new file mode 100644
+index 0000000..739fc8a
+--- /dev/null
++++ b/docs/features/url-normalization.md
+@@ -0,0 +1,55 @@
++## URL normalization
++
++### Intended behavior
++
++The URL-normalization policy for link creation is to lowercase the URL scheme and host, remove the scheme’s default port, and remove query parameters whose names begin with `utm_`, regardless of case. Other query parameters, their values and order, the path, and the fragment should be preserved. For example, the intended normalized destination for:
++
++```text
++HTTPS://Example.COM:443/docs?ref=mail&utm_source=newsletter#intro
++```
++
++is:
++
++```text
++https://example.com/docs?ref=mail#intro
++```
++
++### Current implementation status
++
++The current `LinkService.CreateAsync` implementation does **not** normalize the destination. It constructs the saved `ShortLink` using `request.LongUrl` directly. Consequently, the API response and subsequent link details report the submitted URL as stored; the example transformation above is not currently performed. Existing links are not rewritten.
++
++### API usage
++
++Create a link with the existing endpoint and request shape:
++
++```http
++POST /api/v1/links
++Content-Type: application/json
++
++{
++  "longUrl": "HTTPS://Example.COM:443/docs?ref=mail&utm_source=newsletter#intro"
++}
++```
++
++On success, the endpoint continues to return `201 Created` and a `Location` header pointing to the created link. The response’s `longUrl` reflects the saved destination. With the current implementation, that value remains exactly as submitted:
++
++```json
++{
++  "code": "abc1234",
++  "shortUrl": "http://localhost/abc1234",
++  "longUrl": "HTTPS://Example.COM:443/docs?ref=mail&utm_source=newsletter#intro"
++}
++```
++
++The code and short URL above are illustrative. The endpoint contract and response shape are unchanged by the intended normalization policy.
++
++### Configuration and operations
++
++There is no URL-normalization configuration in the current implementation. The requested policy is intended to apply automatically during link creation, without a setting to enable or disable it. No database schema change or migration is needed for this policy; the destination is stored in the existing link URL field.
++
++### Limitations
++
++- Normalization is not currently performed by the supplied `LinkService` code. Operators should not rely on equivalent URL spellings being stored identically.
++- Existing links are not changed retroactively.
++- The intended policy removes only `utm_` query parameters (case-insensitively) and the applicable default port. It does not remove other query parameters or rewrite paths, fragments, or non-default ports.
++- Request validation, own-host checks, and idempotency behavior remain based on the incoming request in the current implementation.
+diff --git a/tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs b/tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs
+new file mode 100644
+index 0000000..d36fd93
+--- /dev/null
++++ b/tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs
+@@ -0,0 +1,73 @@
++using System.Net;
++using System.Net.Http.Json;
++using System.Text.Json;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.DependencyInjection;
++using UrlShortener.Application.Links;
++using UrlShortener.Infrastructure;
++using Xunit;
++
++namespace UrlShortener.IntegrationTests;
++
++public sealed class UrlNormalizationTests : IClassFixture<ApiFactory>
++{
++    private readonly ApiFactory factory;
++
++    public UrlNormalizationTests(ApiFactory factory)
++    {
++        this.factory = factory;
++    }
++
++    [Theory]
++    [InlineData(
++        "HTTP://ExAmPlE.CoM:80/Path?Keep=a%2Fb&utm_source=ad&MiXeD=one+two&UTM_campaign=summer#Frag",
++        "http://example.com/Path?Keep=a%2Fb&MiXeD=one+two#Frag")]
++    [InlineData(
++        "HTTPS://ExAmPlE.CoM:443/secure?first=1&UtM_Medium=email&second=x%20y",
++        "https://example.com/secure?first=1&second=x%20y")]
++    [InlineData(
++        "HTTP://ExAmPlE.CoM:8080/custom?utm_source=ad&keep=value",
++        "http://example.com:8080/custom?keep=value")]
++    [InlineData(
++        "https://ExAmPlE.CoM/path?utm_source=ad&UTM_medium=email",
++        "https://example.com/path")]
++    public async Task CreateReturnsAndPersistsNormalizedDestination(string inputUrl, string expectedUrl)
++    {
++        using var client = factory.Client();
++        using var response = await client.PostAsJsonAsync("/api/v1/links", new CreateLinkRequest(inputUrl));
++
++        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
++        Assert.Equal("/api/v1/links/" + (await response.Content.ReadFromJsonAsync<LinkResponse>())!.Code,
++            response.Headers.Location!.OriginalString);
++
++        var created = (await response.Content.ReadFromJsonAsync<LinkResponse>())!;
++        Assert.Equal(expectedUrl, created.LongUrl);
++
++        var details = await client.GetFromJsonAsync<LinkDetails>($"/api/v1/links/{created.Code}");
++        Assert.NotNull(details);
++        Assert.Equal(expectedUrl, details.LongUrl);
++
++        await using var scope = factory.Services.CreateAsyncScope();
++        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
++        var savedUrl = await db.ShortLinks.Where(link => link.Code == created.Code)
++            .Select(link => link.LongUrl).SingleAsync();
++        Assert.Equal(expectedUrl, savedUrl);
++    }
++
++    [Fact]
++    public async Task InvalidDestinationReturnsProblemDetailsAndIsNotSaved()
++    {
++        using var client = factory.Client();
++        using var response = await client.PostAsJsonAsync("/api/v1/links",
++            new CreateLinkRequest("ftp://example.com/path?utm_source=ad"));
++
++        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
++        Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
++        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
++        Assert.Equal((int)HttpStatusCode.BadRequest, problem.GetProperty("status").GetInt32());
++
++        await using var scope = factory.Services.CreateAsyncScope();
++        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
++        Assert.Equal(0, await db.ShortLinks.CountAsync());
++    }
++}

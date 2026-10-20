@@ -1,0 +1,219 @@
+diff --git a/docs/features/url-normalization.md b/docs/features/url-normalization.md
+new file mode 100644
+index 0000000..a7912e6
+--- /dev/null
++++ b/docs/features/url-normalization.md
+@@ -0,0 +1,52 @@
++## URL normalization for newly created links
++
++When a valid destination URL is submitted to create a link, the application normalizes it before saving. The stored destination is then used by the existing redirect flow.
++
++Normalization:
++
++- Lowercases the URL scheme and host.
++- Removes the default port for the scheme: `:80` for HTTP and `:443` for HTTPS.
++- Removes every query parameter whose name begins with `utm_`, without regard to the name’s letter case.
++- Preserves non-tracking query parameters and their order, the fragment, and non-default ports.
++
++The API contract and validation behavior are unchanged. A response that includes the destination reflects the normalized value.
++
++### API usage
++
++Create a link through the existing endpoint:
++
++```http
++POST /api/v1/links HTTP/1.1
++Content-Type: application/json
++
++{"longUrl":"HTTP://Example.COM:80/page?utm_source=news&ref=a#top"}
++```
++
++The destination stored for the link is:
++
++```text
++http://example.com/page?ref=a#top
++```
++
++The response uses the existing success status and response shape. For illustration, if that response includes a `longUrl` field, its value is normalized:
++
++```json
++{
++  "longUrl": "http://example.com/page?ref=a#top"
++}
++```
++
++The request and response above illustrate the normalization behavior; use the exact field names and other response fields defined by the API version you are using. No new endpoint or response field is introduced. A short link created this way redirects to its stored, normalized destination.
++
++### Configuration
++
++There is no configuration to enable or tune. Normalization is applied automatically during link creation after existing validation succeeds and before the destination is saved. Invalid requests retain their existing validation behavior and are not saved.
++
++### Limitations and compatibility
++
++- Only newly created links are normalized. Existing stored links are not rewritten.
++- Only HTTP and HTTPS default ports are removed. Non-default ports are retained.
++- Only query parameter names beginning with `utm_` are removed. Other parameters, including duplicates, are retained in their original order.
++- The existing request, response, status-code, and redirect contracts are unchanged.
++- Existing idempotency behavior is unchanged. Request-hash semantics are not updated to use the normalized URL, so differently written URLs that normalize to the same destination may still be treated as different requests by the existing idempotency rules.
++- No database migration is required.
+diff --git a/src/UrlShortener.Application/Links/UrlNormalizer.cs b/src/UrlShortener.Application/Links/UrlNormalizer.cs
+new file mode 100644
+index 0000000..1643410
+--- /dev/null
++++ b/src/UrlShortener.Application/Links/UrlNormalizer.cs
+@@ -0,0 +1,155 @@
++namespace UrlShortener.Application.Links;
++
++/// <summary>
++/// Normalizes valid hierarchical destination URLs without rebuilding their path,
++/// query values, or fragment through <see cref="UriBuilder"/>.
++/// </summary>
++public static class UrlNormalizer
++{
++    /// <summary>
++    /// Lowercases the URL scheme and host, removes HTTP and HTTPS default ports,
++    /// and removes query parameters whose names begin with <c>utm_</c>.
++    /// Other URL components and the order and representation of retained query
++    /// parameters are preserved.
++    /// </summary>
++    public static string Normalize(string url)
++    {
++        ArgumentNullException.ThrowIfNull(url);
++
++        var schemeSeparator = url.IndexOf("://", StringComparison.Ordinal);
++        if (schemeSeparator <= 0)
++        {
++            return url;
++        }
++
++        var scheme = url[..schemeSeparator];
++        var authorityStart = schemeSeparator + 3;
++        var authorityEnd = FindFirst(url, authorityStart, '/', '?', '#');
++        if (authorityEnd < 0)
++        {
++            authorityEnd = url.Length;
++        }
++
++        var authority = url[authorityStart..authorityEnd];
++        if (authority.Length == 0)
++        {
++            return url;
++        }
++
++        var normalizedAuthority = NormalizeAuthority(authority, scheme);
++        var normalizedSuffix = RemoveTrackingParameters(url[authorityEnd..]);
++
++        return string.Concat(
++            scheme.ToLowerInvariant(),
++            "://",
++            normalizedAuthority,
++            normalizedSuffix);
++    }
++
++    private static string NormalizeAuthority(string authority, string scheme)
++    {
++        var userInfoEnd = authority.LastIndexOf('@');
++        var hostStart = userInfoEnd + 1;
++        var hostAndPort = authority[hostStart..];
++        if (hostAndPort.Length == 0)
++        {
++            return authority;
++        }
++
++        int hostEnd;
++        if (hostAndPort[0] == '[')
++        {
++            var closingBracket = hostAndPort.IndexOf(']');
++            if (closingBracket < 0)
++            {
++                return authority;
++            }
++
++            hostEnd = closingBracket + 1;
++        }
++        else
++        {
++            var colon = hostAndPort.LastIndexOf(':');
++            hostEnd = colon >= 0 && hostAndPort.IndexOf(':') == colon
++                ? colon
++                : hostAndPort.Length;
++        }
++
++        var host = hostAndPort[..hostEnd];
++        var suffix = hostAndPort[hostEnd..];
++        var normalizedSuffix = IsDefaultPort(suffix, scheme) ? string.Empty : suffix;
++
++        return string.Concat(
++            authority[..hostStart],
++            host.ToLowerInvariant(),
++            normalizedSuffix);
++    }
++
++    private static bool IsDefaultPort(string suffix, string scheme)
++    {
++        if (suffix.Length < 2 || suffix[0] != ':')
++        {
++            return false;
++        }
++
++        return (scheme.Equals("http", StringComparison.OrdinalIgnoreCase)
++                && suffix.AsSpan(1).SequenceEqual("80"))
++            || (scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
++                && suffix.AsSpan(1).SequenceEqual("443"));
++    }
++
++    private static string RemoveTrackingParameters(string suffix)
++    {
++        var fragmentStart = suffix.IndexOf('#');
++        var queryEnd = fragmentStart >= 0 ? fragmentStart : suffix.Length;
++        var queryStart = suffix.IndexOf('?');
++        if (queryStart < 0 || queryStart > queryEnd)
++        {
++            return suffix;
++        }
++
++        var query = suffix[(queryStart + 1)..queryEnd];
++        var fragment = suffix[queryEnd..];
++        var parameters = query.Split('&');
++        var retained = new List<string>(parameters.Length);
++        foreach (var parameter in parameters)
++        {
++            var equals = parameter.IndexOf('=');
++            var name = equals >= 0 ? parameter[..equals] : parameter;
++            if (!name.StartsWith("utm_", StringComparison.OrdinalIgnoreCase))
++            {
++                retained.Add(parameter);
++            }
++        }
++
++        if (retained.Count == parameters.Length)
++        {
++            return suffix;
++        }
++
++        if (retained.Count == 0)
++        {
++            return string.Concat(suffix[..queryStart], fragment);
++        }
++
++        return string.Concat(
++            suffix[..queryStart],
++            "?",
++            string.Join('&', retained),
++            fragment);
++    }
++
++    private static int FindFirst(string value, int start, char first, char second, char third)
++    {
++        for (var index = start; index < value.Length; index++)
++        {
++            var character = value[index];
++            if (character == first || character == second || character == third)
++            {
++                return index;
++            }
++        }
++
++        return -1;
++    }
++}

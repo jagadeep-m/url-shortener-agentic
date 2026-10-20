@@ -1,0 +1,291 @@
+diff --git a/docs/features/destination-url-normalization.md b/docs/features/destination-url-normalization.md
+new file mode 100644
+index 0000000..6e68c50
+--- /dev/null
++++ b/docs/features/destination-url-normalization.md
+@@ -0,0 +1,49 @@
++# Destination URL normalization
++
++When you create a short link, the service normalizes its destination before saving it. The normalized URL is returned by the create endpoint, shown in link details, and used for redirects.
++
++Normalization lowercases the URL scheme and host, removes the default port (`:80` for HTTP and `:443` for HTTPS), and removes query parameters whose names start with `utm_` (case-insensitively). Other query parameters and the fragment are retained. If all query parameters are removed, the URL has no query string.
++
++## API usage
++
++Create links using the existing endpoint and request shape:
++
++```http
++POST /api/v1/links
++Content-Type: application/json
++
++{
++  "longUrl": "HTTPS://Example.COM:443/docs?utm_source=newsletter&ref=home&utm_campaign=spring#overview"
++}
++```
++
++A successful request returns `201 Created`. The `longUrl` in the response is normalized:
++
++```http
++HTTP/1.1 201 Created
++Location: /api/v1/links/Abc1234
++Content-Type: application/json
++
++{
++  "code": "Abc1234",
++  "shortUrl": "https://short.example/Abc1234",
++  "longUrl": "https://example.com/docs?ref=home#overview",
++  "createdAtUtc": "2026-10-20T12:00:00Z",
++  "expiresAtUtc": null
++}
++```
++
++The code, short URL, and timestamp values above are illustrative. No request or response fields have been added. `GET /api/v1/links/{code}` reports the saved normalized destination, and following the short URL redirects to that destination.
++
++## Configuration
++
++No configuration is required. Normalization runs automatically for newly created links. There is no setting to disable or customize the normalization rules. Existing settings that configure the public short-link base URL affect `shortUrl`, not destination normalization.
++
++## Limitations and behavior
++
++- Only default HTTP and HTTPS ports are removed. Non-default ports are retained.
++- Only query parameters whose names begin with `utm_`, regardless of the casing of that prefix, are removed. Other parameters are preserved; their order is not a normalization target.
++- URL fragments are preserved.
++- Previously saved links are not rewritten. Normalization applies when a link is created.
++- Idempotency continues to compare the original request body. Requests with different original URLs can therefore conflict when reused with the same idempotency key, even if those URLs normalize to the same destination.
++- Normalization does not change URL validation, expiry handling, or link creation limits.
+diff --git a/tests/UrlShortener.IntegrationTests/LinkNormalizationApiTests.cs b/tests/UrlShortener.IntegrationTests/LinkNormalizationApiTests.cs
+new file mode 100644
+index 0000000..47e6c60
+--- /dev/null
++++ b/tests/UrlShortener.IntegrationTests/LinkNormalizationApiTests.cs
+@@ -0,0 +1,49 @@
++using System.Net;
++using System.Net.Http.Json;
++using System.Text.Json;
++using UrlShortener.Application.Links;
++using Xunit;
++
++namespace UrlShortener.IntegrationTests;
++
++public sealed class LinkNormalizationApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
++{
++    [Fact]
++    public async Task CreateDetailsAndRedirectUseTheNormalizedDestination()
++    {
++        using var client = factory.Client();
++        const string normalizedUrl = "https://example.com/path?keep=one&other=two#section";
++        var request = new CreateLinkRequest(
++            "HTTPS://ExAmPlE.com:443/path?utm_source=newsletter&keep=one&UTM_campaign=spring&other=two#section",
++            "normalized-" + Guid.NewGuid().ToString("N")[..12]);
++
++        using var created = await client.PostAsJsonAsync("/api/v1/links", request);
++
++        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
++        var response = await created.Content.ReadFromJsonAsync<LinkResponse>();
++        Assert.NotNull(response);
++        Assert.Equal(normalizedUrl, response.LongUrl);
++
++        var details = await client.GetFromJsonAsync<LinkDetails>($"/api/v1/links/{response.Code}");
++        Assert.NotNull(details);
++        Assert.Equal(normalizedUrl, details.LongUrl);
++
++        using var redirect = await client.GetAsync($"/{response.Code}");
++        Assert.Equal(HttpStatusCode.Found, redirect.StatusCode);
++        Assert.Equal(normalizedUrl, redirect.Headers.Location!.OriginalString);
++    }
++
++    [Fact]
++    public async Task InvalidDestinationReturnsProblemDetailsWithoutCreatingLink()
++    {
++        using var client = factory.Client();
++        using var response = await client.PostAsJsonAsync(
++            "/api/v1/links", new CreateLinkRequest("not an absolute URL"));
++
++        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
++        Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
++        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
++        Assert.Equal((int)HttpStatusCode.BadRequest, problem.GetProperty("status").GetInt32());
++        Assert.True(problem.TryGetProperty("type", out _));
++    }
++}
+diff --git a/tests/UrlShortener.UnitTests/LinkNormalizationTests.cs b/tests/UrlShortener.UnitTests/LinkNormalizationTests.cs
+new file mode 100644
+index 0000000..40d1bfb
+--- /dev/null
++++ b/tests/UrlShortener.UnitTests/LinkNormalizationTests.cs
+@@ -0,0 +1,175 @@
++using System.Security.Cryptography;
++using System.Text;
++using FluentValidation;
++using UrlShortener.Application.Links;
++using UrlShortener.Application.Repositories;
++using UrlShortener.Domain;
++using Xunit;
++
++namespace UrlShortener.UnitTests;
++
++public sealed class LinkNormalizationTests
++{
++    private sealed class FixedClock : TimeProvider
++    {
++        public override DateTimeOffset GetUtcNow() => new(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
++    }
++
++    private sealed class FixedGenerator : ICodeGenerator
++    {
++        public string Generate() => "Abc1234";
++    }
++
++    private sealed class CreationRepository : ILinkCreationRepository
++    {
++        public ShortLink? SavedLink { get; private set; }
++        public int SaveCalls { get; private set; }
++        public string? SavedKey { get; private set; }
++        public string? SavedHash { get; private set; }
++        public bool ThrowOnSave { get; init; }
++
++        public Task<IdempotentLink?> FindByKeyAsync(string key, CancellationToken ct)
++        {
++            ct.ThrowIfCancellationRequested();
++            if (SavedLink is null || SavedKey != key)
++                return Task.FromResult<IdempotentLink?>(null);
++
++            return Task.FromResult<IdempotentLink?>(new IdempotentLink(SavedHash!, SavedLink));
++        }
++
++        public Task<CreationResult> TryCreateAsync(ShortLink link, string? key, string requestHash, CancellationToken ct)
++        {
++            ct.ThrowIfCancellationRequested();
++            SaveCalls++;
++            if (ThrowOnSave)
++                throw new InvalidOperationException("The persistence operation failed.");
++
++            SavedLink = link;
++            SavedKey = key;
++            SavedHash = requestHash;
++            return Task.FromResult(new CreationResult(CreationStatus.Created, link));
++        }
++    }
++
++    private sealed class OtherRepositories : IShortLinkRepository, IRedirectStore, ILinkStatsRepository
++    {
++        public Task<ShortLink?> FindByCodeAsync(string code, CancellationToken cancellationToken = default) =>
++            Task.FromResult<ShortLink?>(null);
++
++        public Task<bool> TryAddAsync(ShortLink link, CancellationToken cancellationToken = default) =>
++            throw new NotSupportedException();
++
++        public Task<bool> DisableAsync(string code, CancellationToken cancellationToken = default) =>
++            Task.FromResult(false);
++
++        public Task<ShortLink?> FindAsync(string code, CancellationToken ct) =>
++            Task.FromResult<ShortLink?>(null);
++
++        public Task<LinkStats> GetAsync(long linkId, CancellationToken ct) =>
++            throw new NotSupportedException();
++    }
++
++    private static LinkService CreateService(CreationRepository creation) =>
++        new(new CreateLinkValidator(), creation, new OtherRepositories(), new OtherRepositories(),
++            new OtherRepositories(), new FixedGenerator(), new FixedClock());
++
++    [Theory]
++    [InlineData("HTTP://ExAmPlE.com:80/path?utm_source=x&Keep=two#Part", "http://example.com/path?Keep=two#Part")]
++    [InlineData("HTTPS://ExAmPlE.com:443/path?Keep=one&utm_CAMPAIGN=x&keep=two#Frag", "https://example.com/path?Keep=one&keep=two#Frag")]
++    [InlineData("http://ExAmPlE.com:8080/path?utm_source=x&keep=y", "http://example.com:8080/path?keep=y")]
++    public async Task SavesLowercaseSchemeAndHostAndRemovesOnlyDefaultPortsAndUtmParameters(string input, string expected)
++    {
++        var creation = new CreationRepository();
++
++        var link = await CreateService(creation).CreateAsync(new CreateLinkRequest(input), null, ["shortener.example"]);
++
++        Assert.Equal(expected, link.LongUrl);
++        Assert.Equal(expected, Assert.IsType<ShortLink>(creation.SavedLink).LongUrl);
++        Assert.Equal(1, creation.SaveCalls);
++    }
++
++    [Fact]
++    public async Task RemovesQueryStringWhenItContainsOnlyUtmParametersAndPreservesFragment()
++    {
++        var creation = new CreationRepository();
++
++        var link = await CreateService(creation).CreateAsync(
++            new CreateLinkRequest("HTTPS://ExAmPlE.com:443/path?utm_source=newsletter&UTM_medium=email#section"),
++            null, ["shortener.example"]);
++
++        Assert.Equal("https://example.com/path#section", link.LongUrl);
++    }
++
++    [Fact]
++    public async Task PreservesNonUtmParametersAndTheirOrderAndDoesNotRemoveSimilarNames()
++    {
++        var creation = new CreationRepository();
++
++        var link = await CreateService(creation).CreateAsync(
++            new CreateLinkRequest("http://EXAMPLE.com/path?first=1&utm_source=campaign&notutm_source=2&last=a%2Bb#details"),
++            null, ["shortener.example"]);
++
++        Assert.Equal("http://example.com/path?first=1&notutm_source=2&last=a%2Bb#details", link.LongUrl);
++    }
++
++    [Fact]
++    public async Task IdempotencyHashContinuesToUseTheOriginalRequest()
++    {
++        var creation = new CreationRepository();
++        var service = CreateService(creation);
++        const string key = "normalization-idempotency-key";
++
++        var originalRequest = new CreateLinkRequest("HTTP://Example.com:80/path?utm_source=one&keep=yes");
++        var first = await service.CreateAsync(originalRequest, key, ["shortener.example"]);
++        var firstHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
++            System.Text.Json.JsonSerializer.Serialize(originalRequest))));
++
++        var equivalentAfterNormalization = new CreateLinkRequest("http://example.com/path?keep=yes");
++        var exception = await Assert.ThrowsAsync<LinkOperationException>(() =>
++            service.CreateAsync(equivalentAfterNormalization, key, ["shortener.example"]));
++
++        Assert.Equal("http://example.com/path?keep=yes", first.LongUrl);
++        Assert.Equal(firstHash, creation.SavedHash);
++        Assert.Equal(409, exception.StatusCode);
++        Assert.Equal(1, creation.SaveCalls);
++    }
++
++    [Fact]
++    public async Task InvalidUrlFailsValidationWithoutAttemptingPersistence()
++    {
++        var creation = new CreationRepository();
++
++        await Assert.ThrowsAsync<ValidationException>(() =>
++            CreateService(creation).CreateAsync(new CreateLinkRequest("not an absolute URL"), null, ["shortener.example"]));
++
++        Assert.Equal(0, creation.SaveCalls);
++        Assert.Null(creation.SavedLink);
++    }
++
++    [Fact]
++    public async Task OwnHostRejectionDoesNotAttemptPersistence()
++    {
++        var creation = new CreationRepository();
++
++        var exception = await Assert.ThrowsAsync<LinkOperationException>(() =>
++            CreateService(creation).CreateAsync(
++                new CreateLinkRequest("https://SHORTENER.example/path?utm_source=test"), null, ["shortener.example"]));
++
++        Assert.Equal(400, exception.StatusCode);
++        Assert.Equal(0, creation.SaveCalls);
++        Assert.Null(creation.SavedLink);
++    }
++
++    [Fact]
++    public async Task PersistenceFailureIsPropagated()
++    {
++        var creation = new CreationRepository { ThrowOnSave = true };
++
++        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
++            CreateService(creation).CreateAsync(
++                new CreateLinkRequest("HTTP://Example.com:80/path?utm_source=test"), null, ["shortener.example"]));
++
++        Assert.Equal("The persistence operation failed.", exception.Message);
++        Assert.Equal(1, creation.SaveCalls);
++    }
++}

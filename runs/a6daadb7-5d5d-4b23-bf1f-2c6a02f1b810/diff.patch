@@ -1,0 +1,468 @@
+diff --git a/docs/features/url-normalization.md b/docs/features/url-normalization.md
+new file mode 100644
+index 0000000..e329611
+--- /dev/null
++++ b/docs/features/url-normalization.md
+@@ -0,0 +1,57 @@
++# URL normalization for saved links
++
++When a link is created, the service normalizes its destination URL before saving it. The normalized destination is returned in the existing API response and is used by link-details and redirect flows.
++
++Normalization:
++
++- Lowercases the URL scheme and host.
++- Removes port `:80` from HTTP URLs and `:443` from HTTPS URLs. Other ports are retained.
++- Removes query parameters whose names start with `utm_`, case-insensitively. Percent-encoded parameter names are decoded when checking the name; retained parameters keep their original spelling and encoding.
++- Keeps non-UTM query parameters, their order, the path, and the fragment. If all query parameters are removed, the URL has no trailing `?`.
++
++For example, `HTTPS://Example.COM:443/docs?utm_source=summer&ref=mail#setup` is saved as `https://example.com/docs?ref=mail#setup`.
++
++## API usage
++
++Create links through the existing endpoint:
++
++```http
++POST /api/v1/links
++Content-Type: application/json
++```
++
++Example request:
++
++```json
++{
++  "longUrl": "HTTPS://Example.COM:443/docs?utm_source=summer&utm_campaign=launch&ref=mail#setup",
++  "customAlias": "install-guide"
++}
++```
++
++Example response (`shortUrl` depends on the service's configured public base URL):
++
++```json
++{
++  "code": "install-guide",
++  "shortUrl": "https://sho.rt/install-guide",
++  "longUrl": "https://example.com/docs?ref=mail#setup",
++  "createdAt": "2026-10-20T12:00:00Z",
++  "expiresAt": null
++}
++```
++
++The request and response schemas and endpoint paths are unchanged. Link-details responses expose the saved, normalized `longUrl`; redirects use that saved destination as well.
++
++## Configuration
++
++There are no URL-normalization-specific settings or enable/disable switch. The normalization rules apply automatically to newly created links. The existing `PublicBaseUrl` setting controls the base URL used to form `shortUrl`; it does not change destination normalization.
++
++## Limitations and operational notes
++
++- Normalization applies at creation time only. Existing saved links are not rewritten; recreate a link to save its destination in normalized form.
++- Only HTTP and HTTPS destinations are accepted by the existing create-link validation.
++- The service-host destination check and URL validation still apply to the submitted URL. Normalization does not bypass either check.
++- Idempotency continues to use the original request body. Reusing an idempotency key with a different submitted URL can conflict even if the two URLs would normalize to the same destination.
++- Tracking parameters are removed only when their parameter name begins with `utm_` (case-insensitively). Other parameters, including similarly named parameters such as `not_utm_source`, are retained.
++- Non-default ports are retained. Existing links and idempotency records are not changed by deployment; no data migration is required.
+diff --git a/src/UrlShortener.Application/Links/LinkService.cs b/src/UrlShortener.Application/Links/LinkService.cs
+index 9dc8532..71afae4 100644
+--- a/src/UrlShortener.Application/Links/LinkService.cs
++++ b/src/UrlShortener.Application/Links/LinkService.cs
+@@ -30,6 +30,7 @@ public sealed class LinkService(IValidator<CreateLinkRequest> validator, ILinkCr
+             return previous.Link;
+         }
+ 
++        var normalizedUrl = UrlNormalizer.Normalize(request.LongUrl);
+         var now = clock.GetUtcNow().UtcDateTime;
+         if (request.ExpiresAt <= now) throw new LinkOperationException(400, "Expiry must be in the future.");
+         // An initial attempt plus at most three collision retries.
+@@ -37,7 +38,7 @@ public sealed class LinkService(IValidator<CreateLinkRequest> validator, ILinkCr
+         {
+             var code = request.CustomAlias ?? generator.Generate();
+             if (request.CustomAlias is null && new[] { "api", "health", "swagger" }.Contains(code, StringComparer.OrdinalIgnoreCase)) continue;
+-            var result = await creation.TryCreateAsync(new ShortLink(code, request.LongUrl, now, request.ExpiresAt), key, hash, ct);
++            var result = await creation.TryCreateAsync(new ShortLink(code, normalizedUrl, now, request.ExpiresAt), key, hash, ct);
+             if (result.Status is CreationStatus.Created or CreationStatus.Replayed) return result.Link!;
+             if (result.Status == CreationStatus.KeyConflict) throw new LinkOperationException(409, "Idempotency-Key was used with a different request.");
+             if (request.CustomAlias is not null) throw new LinkOperationException(409, "The custom alias is already taken.");
+diff --git a/src/UrlShortener.Application/Links/UrlNormalizer.cs b/src/UrlShortener.Application/Links/UrlNormalizer.cs
+new file mode 100644
+index 0000000..b904adb
+--- /dev/null
++++ b/src/UrlShortener.Application/Links/UrlNormalizer.cs
+@@ -0,0 +1,124 @@
++namespace UrlShortener.Application.Links;
++
++/// <summary>
++/// Normalizes the URL components required for newly created links while preserving the
++/// original text of unaffected components.
++/// </summary>
++public static class UrlNormalizer
++{
++    public static string Normalize(string url)
++    {
++        ArgumentNullException.ThrowIfNull(url);
++
++        var schemeSeparator = url.IndexOf("://", StringComparison.Ordinal);
++        if (schemeSeparator < 0)
++        {
++            // Uri accepts a small number of alternate spellings (such as backslashes) and
++            // can provide the standard authority form for those inputs.
++            if (Uri.TryCreate(url, UriKind.Absolute, out var parsed))
++                url = parsed.AbsoluteUri;
++            schemeSeparator = url.IndexOf("://", StringComparison.Ordinal);
++            if (schemeSeparator < 0)
++                return url;
++        }
++
++        var scheme = url[..schemeSeparator].ToLowerInvariant();
++        var authorityStart = schemeSeparator + 3;
++        var authorityEnd = FindAuthorityEnd(url, authorityStart);
++        var authority = NormalizeAuthority(url[authorityStart..authorityEnd], scheme);
++        var suffix = StripTrackingParameters(url[authorityEnd..]);
++
++        return string.Concat(scheme, url[schemeSeparator..authorityStart], authority, suffix);
++    }
++
++    private static int FindAuthorityEnd(string url, int authorityStart)
++    {
++        var end = url.Length;
++        foreach (var delimiter in new[] { '/', '?', '#' })
++        {
++            var index = url.IndexOf(delimiter, authorityStart);
++            if (index >= 0 && index < end)
++                end = index;
++        }
++        return end;
++    }
++
++    private static string NormalizeAuthority(string authority, string scheme)
++    {
++        var hostStart = authority.LastIndexOf('@') + 1;
++        var hostEnd = authority.Length;
++        var portStart = -1;
++
++        if (hostStart < authority.Length && authority[hostStart] == '[')
++        {
++            var closingBracket = authority.IndexOf(']', hostStart);
++            if (closingBracket >= 0)
++            {
++                hostEnd = closingBracket + 1;
++                if (hostEnd < authority.Length && authority[hostEnd] == ':')
++                    portStart = hostEnd;
++            }
++        }
++        else
++        {
++            var colon = authority.LastIndexOf(':');
++            if (colon >= hostStart)
++            {
++                hostEnd = colon;
++                portStart = colon;
++            }
++        }
++
++        var host = authority[hostStart..hostEnd].ToLowerInvariant();
++        var port = portStart >= 0 ? authority[(portStart + 1)..] : string.Empty;
++        var removeDefaultPort = portStart >= 0
++            && int.TryParse(port, System.Globalization.NumberStyles.None,
++                System.Globalization.CultureInfo.InvariantCulture, out var portNumber)
++            && ((scheme == Uri.UriSchemeHttp && portNumber == 80)
++                || (scheme == Uri.UriSchemeHttps && portNumber == 443));
++
++        var authorityPrefix = authority[..hostStart];
++        var authoritySuffix = portStart < 0
++            ? authority[hostEnd..]
++            : removeDefaultPort
++                ? string.Empty
++                : authority[portStart..];
++        return string.Concat(authorityPrefix, host, authoritySuffix);
++    }
++
++    private static string StripTrackingParameters(string suffix)
++    {
++        var queryStart = suffix.IndexOf('?');
++        if (queryStart < 0)
++            return suffix;
++
++        var fragmentStart = suffix.IndexOf('#', queryStart);
++        var queryEnd = fragmentStart >= 0 ? fragmentStart : suffix.Length;
++        var query = suffix[(queryStart + 1)..queryEnd];
++        var parameters = query.Split('&');
++        var retained = new List<string>(parameters.Length);
++        var removedAny = false;
++
++        foreach (var parameter in parameters)
++        {
++            var equals = parameter.IndexOf('=');
++            var encodedName = equals >= 0 ? parameter[..equals] : parameter;
++            var name = Uri.UnescapeDataString(encodedName);
++            if (name.StartsWith("utm_", StringComparison.OrdinalIgnoreCase))
++            {
++                removedAny = true;
++                continue;
++            }
++            retained.Add(parameter);
++        }
++
++        if (!removedAny)
++            return suffix;
++
++        var prefix = suffix[..queryStart];
++        var fragment = fragmentStart >= 0 ? suffix[fragmentStart..] : string.Empty;
++        return retained.Count == 0
++            ? string.Concat(prefix, fragment)
++            : string.Concat(prefix, "?", string.Join('&', retained), fragment);
++    }
++}
+diff --git a/tests/UrlShortener.IntegrationTests/UrlNormalizationApiTests.cs b/tests/UrlShortener.IntegrationTests/UrlNormalizationApiTests.cs
+new file mode 100644
+index 0000000..edc102d
+--- /dev/null
++++ b/tests/UrlShortener.IntegrationTests/UrlNormalizationApiTests.cs
+@@ -0,0 +1,46 @@
++using System.Net;
++using System.Net.Http.Json;
++using System.Text.Json;
++using UrlShortener.Application.Links;
++using Xunit;
++
++namespace UrlShortener.IntegrationTests;
++
++public sealed class UrlNormalizationApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
++{
++    [Fact]
++    public async Task CreateDetailsAndRedirectUseNormalizedSavedDestination()
++    {
++        using var client = factory.Client();
++        const string expectedUrl = "http://example.com/docs?Keep=a%2Fb#section";
++        using var createdResponse = await client.PostAsJsonAsync("/api/v1/links", new CreateLinkRequest(
++            "HTTP://ExAmPlE.COM:80/docs?utm_source=campaign&Keep=a%2Fb#section"));
++
++        Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
++        var created = await createdResponse.Content.ReadFromJsonAsync<LinkResponse>();
++        Assert.NotNull(created);
++        Assert.Equal(expectedUrl, created.LongUrl);
++
++        var details = await client.GetFromJsonAsync<LinkDetails>($"/api/v1/links/{created.Code}");
++        Assert.NotNull(details);
++        Assert.Equal(expectedUrl, details.LongUrl);
++
++        using var redirect = await client.GetAsync($"/{created.Code}");
++        Assert.Equal(HttpStatusCode.Found, redirect.StatusCode);
++        Assert.NotNull(redirect.Headers.Location);
++        Assert.Equal(expectedUrl, redirect.Headers.Location.OriginalString);
++    }
++
++    [Fact]
++    public async Task CreationStillRejectsServiceHostTargetAsProblemDetails()
++    {
++        using var client = factory.Client();
++        using var response = await client.PostAsJsonAsync("/api/v1/links", new CreateLinkRequest(
++            "HTTP://LOCALHOST:80/path?utm_source=campaign"));
++
++        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
++        Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
++        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
++        Assert.Equal((int)HttpStatusCode.BadRequest, problem.GetProperty("status").GetInt32());
++    }
++}
+diff --git a/tests/UrlShortener.UnitTests/LinkNormalizationTests.cs b/tests/UrlShortener.UnitTests/LinkNormalizationTests.cs
+new file mode 100644
+index 0000000..4923064
+--- /dev/null
++++ b/tests/UrlShortener.UnitTests/LinkNormalizationTests.cs
+@@ -0,0 +1,142 @@
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
++using FluentValidation;
++using UrlShortener.Application.Links;
++using UrlShortener.Application.Repositories;
++using UrlShortener.Domain;
++using Xunit;
++
++namespace UrlShortener.UnitTests;
++
++public sealed class LinkNormalizationTests
++{
++    private sealed class Clock : TimeProvider
++    {
++        public override DateTimeOffset GetUtcNow() => new(2026, 10, 17, 12, 0, 0, TimeSpan.Zero);
++    }
++
++    private sealed class Generator : ICodeGenerator
++    {
++        public string Generate() => "Abc1234";
++    }
++
++    private sealed class Repository : ILinkCreationRepository, IShortLinkRepository, IRedirectStore, ILinkStatsRepository
++    {
++        public ShortLink? AttemptedLink { get; private set; }
++        public string? AttemptedRequestHash { get; private set; }
++        public CreationStatus ResultStatus { get; init; } = CreationStatus.Created;
++        public int CreateCalls { get; private set; }
++
++        public Task<IdempotentLink?> FindByKeyAsync(string key, CancellationToken ct) =>
++            Task.FromResult<IdempotentLink?>(null);
++
++        public Task<CreationResult> TryCreateAsync(ShortLink link, string? key, string requestHash, CancellationToken ct)
++        {
++            ct.ThrowIfCancellationRequested();
++            CreateCalls++;
++            AttemptedLink = link;
++            AttemptedRequestHash = requestHash;
++            return Task.FromResult(ResultStatus == CreationStatus.Created
++                ? new CreationResult(CreationStatus.Created, link)
++                : new CreationResult(ResultStatus));
++        }
++
++        public Task<ShortLink?> FindByCodeAsync(string code, CancellationToken ct = default) =>
++            Task.FromResult<ShortLink?>(null);
++
++        public Task<ShortLink?> FindAsync(string code, CancellationToken ct) =>
++            Task.FromResult<ShortLink?>(null);
++
++        public Task<bool> TryAddAsync(ShortLink link, CancellationToken ct = default) =>
++            throw new NotSupportedException();
++
++        public Task<bool> DisableAsync(string code, CancellationToken ct = default) =>
++            Task.FromResult(false);
++
++        public Task<LinkStats> GetAsync(long linkId, CancellationToken ct) =>
++            throw new NotSupportedException();
++    }
++
++    private static LinkService CreateService(Repository repository) =>
++        new(new CreateLinkValidator(), repository, repository, repository, repository, new Generator(), new Clock());
++
++    [Theory]
++    [InlineData(
++        "HTTP://ExAmPlE.com:80/docs?utm_source=campaign&Keep=a%2Fb&UTM_campaign=spring#section",
++        "http://example.com/docs?Keep=a%2Fb#section")]
++    [InlineData(
++        "https://EXAMPLE.com:443/path?keep=1&utm_source=x&Keep=2",
++        "https://example.com/path?keep=1&Keep=2")]
++    [InlineData(
++        "https://EXAMPLE.com:8443/a?not_utm_source=x&utm_id=y#frag",
++        "https://example.com:8443/a?not_utm_source=x#frag")]
++    [InlineData(
++        "https://example.com/path?%75tm_source=campaign&keep=value",
++        "https://example.com/path?keep=value")]
++    public async Task CreateSavesNormalizedDestinationAndHashesOriginalRequest(string submittedUrl, string expectedUrl)
++    {
++        var repository = new Repository();
++        var request = new CreateLinkRequest(submittedUrl);
++
++        var created = await CreateService(repository).CreateAsync(request, null, ["localhost"]);
++
++        Assert.Equal(expectedUrl, created.LongUrl);
++        Assert.Equal(expectedUrl, Assert.IsType<ShortLink>(repository.AttemptedLink).LongUrl);
++        var expectedHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request))));
++        Assert.Equal(expectedHash, repository.AttemptedRequestHash);
++        Assert.Equal(1, repository.CreateCalls);
++    }
++
++    [Fact]
++    public async Task UTMOnlyQueryIsRemovedWithoutLeavingQuestionMark()
++    {
++        var repository = new Repository();
++
++        var created = await CreateService(repository).CreateAsync(
++            new CreateLinkRequest("https://example.com/path?utm_source=campaign#section"), null, ["localhost"]);
++
++        Assert.Equal("https://example.com/path#section", created.LongUrl);
++        Assert.DoesNotContain("?", created.LongUrl);
++    }
++
++    [Fact]
++    public async Task InvalidRequestFailsBeforeAttemptingPersistence()
++    {
++        var repository = new Repository();
++
++        await Assert.ThrowsAsync<ValidationException>(() =>
++            CreateService(repository).CreateAsync(new CreateLinkRequest("not-an-absolute-url"), null, ["localhost"]));
++
++        Assert.Equal(0, repository.CreateCalls);
++        Assert.Null(repository.AttemptedLink);
++    }
++
++    [Fact]
++    public async Task ServiceHostRejectionStillOccursBeforeAttemptingPersistence()
++    {
++        var repository = new Repository();
++
++        var exception = await Assert.ThrowsAsync<LinkOperationException>(() =>
++            CreateService(repository).CreateAsync(
++                new CreateLinkRequest("HTTP://LOCALHOST:80/path?utm_source=campaign"), null, ["localhost"]));
++
++        Assert.Equal(400, exception.StatusCode);
++        Assert.Equal(0, repository.CreateCalls);
++        Assert.Null(repository.AttemptedLink);
++    }
++
++    [Fact]
++    public async Task CustomAliasConflictRemainsAConflictAndDoesNotRetry()
++    {
++        var repository = new Repository { ResultStatus = CreationStatus.CodeConflict };
++
++        var exception = await Assert.ThrowsAsync<LinkOperationException>(() =>
++            CreateService(repository).CreateAsync(
++                new CreateLinkRequest("HTTP://ExAmPlE.com:80/path?utm_source=campaign", "custom-alias"), null, ["localhost"]));
++
++        Assert.Equal(409, exception.StatusCode);
++        Assert.Equal(1, repository.CreateCalls);
++        Assert.Equal("http://example.com/path", Assert.IsType<ShortLink>(repository.AttemptedLink).LongUrl);
++    }
++}
+diff --git a/tests/UrlShortener.UnitTests/UrlNormalizerTests.cs b/tests/UrlShortener.UnitTests/UrlNormalizerTests.cs
+new file mode 100644
+index 0000000..18957a6
+--- /dev/null
++++ b/tests/UrlShortener.UnitTests/UrlNormalizerTests.cs
+@@ -0,0 +1,48 @@
++using UrlShortener.Application.Links;
++using Xunit;
++
++namespace UrlShortener.UnitTests;
++
++public sealed class UrlNormalizerTests
++{
++    [Theory]
++    [InlineData("HTTP://ExAmPlE.com:80/docs", "http://example.com/docs")]
++    [InlineData("https://EXAMPLE.com:443/path#section", "https://example.com/path#section")]
++    [InlineData("https://EXAMPLE.com:8443/a", "https://example.com:8443/a")]
++    public void NormalizeLowercasesSchemeAndHostAndRemovesOnlyDefaultPorts(string input, string expected)
++    {
++        Assert.Equal(expected, UrlNormalizer.Normalize(input));
++    }
++
++    [Theory]
++    [InlineData(
++        "https://EXAMPLE.com:443/path?keep=1&utm_source=x#frag",
++        "https://example.com/path?keep=1#frag")]
++    [InlineData(
++        "https://example.com/path?utm_source=x#frag",
++        "https://example.com/path#frag")]
++    [InlineData(
++        "https://example.com/path?%75tm_source=x&Keep=a%2Fb",
++        "https://example.com/path?Keep=a%2Fb")]
++    [InlineData(
++        "https://example.com/path?not_utm_source=x&UTM_campaign=spring",
++        "https://example.com/path?not_utm_source=x")]
++    public void NormalizeRemovesUtmParametersAndPreservesOtherUrlComponents(string input, string expected)
++    {
++        Assert.Equal(expected, UrlNormalizer.Normalize(input));
++    }
++
++    [Fact]
++    public void NormalizePreservesEmptyNonTrackingQueryParameters()
++    {
++        Assert.Equal(
++            "https://example.com/path?&&keep=1&#frag",
++            UrlNormalizer.Normalize("https://example.com/path?&&utm_source=x&keep=1&#frag"));
++    }
++
++    [Fact]
++    public void NormalizeRejectsNullInput()
++    {
++        Assert.Throws<ArgumentNullException>(() => UrlNormalizer.Normalize(null!));
++    }
++}

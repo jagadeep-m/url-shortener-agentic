@@ -1,0 +1,51 @@
+diff --git a/docs/features/url-normalization.md b/docs/features/url-normalization.md
+new file mode 100644
+index 0000000..b6ce0ca
+--- /dev/null
++++ b/docs/features/url-normalization.md
+@@ -0,0 +1,45 @@
++# URL normalization for new links
++
++When you create a link, the service normalizes its destination URL before saving it. The normalized destination is also returned in the existing success response. The API contract and stored data model are unchanged.
++
++Normalization:
++
++- Lowercases the URL scheme and host.
++- Removes a scheme’s default port (for example, `:80` for HTTP and `:443` for HTTPS); keeps non-default ports.
++- Removes query parameters whose decoded names start with `utm_`, ignoring case.
++- Preserves other query parameters, their order where practical, the path, and the fragment.
++- Omits the query delimiter when no query parameters remain.
++
++## API usage
++
++Send a create request to the existing endpoint, using the destination property from the current request schema. In this example, that property is `longUrl`:
++
++```http
++POST /api/v1/links
++Content-Type: application/json
++
++{
++  "longUrl": "HTTPS://EXAMPLE.COM:443/path?utm_source=newsletter&ref=email&utm_campaign=spring#details"
++}
++```
++
++The endpoint keeps its existing success status and response schema. In the existing response, the destination value will be normalized as follows (other response fields are omitted here):
++
++```json
++{
++  "longUrl": "https://example.com/path?ref=email#details"
++}
++```
++
++The value saved for the new link is the same normalized destination.
++
++## Configuration
++
++There is no configuration to enable or tune. Normalization is applied automatically to destinations for newly created links.
++
++## Limitations and compatibility
++
++- Normalization applies to links created after deployment. Existing stored links are not rewritten.
++- UTM parameters are intentionally removed, so links will no longer forward those tracking values.
++- URL validation, the endpoint contract, short-code generation, and existing idempotency behavior are unchanged.
++- The change does not alter unrelated query parameters or the URL fragment.

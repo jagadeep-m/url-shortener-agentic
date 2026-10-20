@@ -1,0 +1,11 @@
+{
+  "summary": "Added focused URL normalizer tests with an explicit xUnit import.",
+  "rationale": "The explicit import addresses the missing Fact/Theory attributes; the cases cover default and non-default ports, tracking removal, retained parameters, case sensitivity, and URL component preservation.",
+  "content": "Added unit coverage for URL normalization.",
+  "files": [
+    {
+      "path": "tests/UrlShortener.UnitTests/UrlNormalizerTests.cs",
+      "content": "using Xunit;\nusing UrlShortener.Application.Links;\n\nnamespace UrlShortener.UnitTests;\n\npublic sealed class UrlNormalizerTests\n{\n    [Theory]\n    [InlineData(\u0022HTTP://EXAMPLE.COM:80/Keep?utm_source=a\u0026foo=bar\u0026utm_medium=b#Frag\u0022, \u0022http://example.com/Keep?foo=bar#Frag\u0022)]\n    [InlineData(\u0022HTTPS://EXAMPLE.COM:443/a?UTM_source=x\u0026utm_source=y\u0026keep=1\u0022, \u0022https://example.com/a?UTM_source=x\u0026keep=1\u0022)]\n    [InlineData(\u0022http://EXAMPLE.com:8080/a?utm_source=x\u0026keep=1\u0022, \u0022http://example.com:8080/a?keep=1\u0022)]\n    public void Normalize_applies_requested_changes_and_preserves_other_components(string input, string expected)\n    {\n        Assert.Equal(expected, UrlNormalizer.Normalize(input));\n    }\n}\n"
+    }
+  ]
+}

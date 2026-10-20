@@ -1,0 +1,153 @@
+diff --git a/docs/features/url-normalization.md b/docs/features/url-normalization.md
+new file mode 100644
+index 0000000..b9563b8
+--- /dev/null
++++ b/docs/features/url-normalization.md
+@@ -0,0 +1,61 @@
++# URL normalization for links
++
++When a link is created, the application normalizes its destination URL after validation and before saving it. The normalized destination is stored on the link and is the destination used when the link redirects.
++
++## What changes
++
++For newly created links, the application:
++
++- Lowercases the URL scheme and host.
++- Removes the default port for the scheme: `:80` for HTTP and `:443` for HTTPS.
++- Removes query parameters whose names start with the exact, lowercase prefix `utm_`.
++- Retains other query parameters, the path and its case, the fragment, and non-default ports.
++- Omits the query delimiter when no query parameters remain.
++
++For example, a destination such as:
++
++```text
++HTTPS://Example.COM:443/Products/Widget?utm_source=newsletter&color=blue#Details
++```
++
++is saved and used for redirects as:
++
++```text
++https://example.com/Products/Widget?color=blue#Details
++```
++
++## API usage
++
++Create links using the existing endpoint and request contract. No new endpoint or request fields are introduced. For example, assuming the request's destination field is `longUrl`:
++
++```http
++POST /api/v1/links
++Content-Type: application/json
++```
++
++```json
++{
++  "longUrl": "HTTPS://Example.COM:443/Products/Widget?utm_source=newsletter&color=blue#Details"
++}
++```
++
++The existing success response is unchanged. Its `longUrl` field contains the normalized, saved destination; the following shows that field:
++
++```json
++{
++  "longUrl": "https://example.com/Products/Widget?color=blue#Details"
++}
++```
++
++The created link redirects to that same normalized destination. Other response fields, if present, continue to follow the existing API contract.
++
++## Configuration
++
++There is no configuration to enable or tune. Normalization is applied automatically to destinations for newly created links. The change adds no endpoint, package, database migration, or schema setting.
++
++## Limitations and compatibility
++
++- Only query parameter names beginning with the exact lowercase prefix `utm_` are removed. For example, `UTM_source` is retained.
++- Existing saved links are not rewritten; normalization applies when a new link is created.
++- Path case, fragments, other query parameters, and non-default ports are retained.
++- Existing validation, response statuses, error handling, and idempotency behavior are unchanged. Normalization does not define a separate idempotency policy.
+diff --git a/src/UrlShortener.Application/Links/UrlNormalizer.cs b/src/UrlShortener.Application/Links/UrlNormalizer.cs
+new file mode 100644
+index 0000000..efd1c1f
+--- /dev/null
++++ b/src/UrlShortener.Application/Links/UrlNormalizer.cs
+@@ -0,0 +1,58 @@
++using System;
++using System.Linq;
++
++namespace UrlShortener.Application.Links;
++
++/// <summary>
++/// Normalizes destination URLs before they are saved.
++/// </summary>
++public static class UrlNormalizer
++{
++    /// <summary>
++    /// Lowercases the URL scheme and host, removes the default HTTP or HTTPS port,
++    /// and removes query parameters whose names begin with the exact lowercase
++    /// prefix <c>utm_</c>.
++    /// </summary>
++    /// <param name="url">An absolute destination URL.</param>
++    /// <returns>The normalized URL.</returns>
++    /// <exception cref="ArgumentNullException"><paramref name="url"/> is null.</exception>
++    /// <exception cref="ArgumentException"><paramref name="url"/> is not an absolute URL.</exception>
++    public static string Normalize(string url)
++    {
++        ArgumentNullException.ThrowIfNull(url);
++
++        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsedUri))
++        {
++            throw new ArgumentException("The URL must be absolute.", nameof(url));
++        }
++
++        var builder = new UriBuilder(parsedUri)
++        {
++            Scheme = parsedUri.Scheme.ToLowerInvariant(),
++            Host = parsedUri.Host.ToLowerInvariant()
++        };
++
++        if ((builder.Scheme == Uri.UriSchemeHttp && builder.Port == 80)
++            || (builder.Scheme == Uri.UriSchemeHttps && builder.Port == 443))
++        {
++            builder.Port = -1;
++        }
++
++        var query = parsedUri.Query;
++        if (query.Length > 1)
++        {
++            var retainedParameters = query[1..]
++                .Split('&')
++                .Where(parameter =>
++                {
++                    var separatorIndex = parameter.IndexOf('=');
++                    var name = separatorIndex < 0 ? parameter : parameter[..separatorIndex];
++                    return !name.StartsWith("utm_", StringComparison.Ordinal);
++                });
++
++            builder.Query = string.Join("&", retainedParameters);
++        }
++
++        return builder.Uri.AbsoluteUri;
++    }
++}
+diff --git a/tests/UrlShortener.UnitTests/UrlNormalizerTests.cs b/tests/UrlShortener.UnitTests/UrlNormalizerTests.cs
+new file mode 100644
+index 0000000..098cfab
+--- /dev/null
++++ b/tests/UrlShortener.UnitTests/UrlNormalizerTests.cs
+@@ -0,0 +1,16 @@
++using Xunit;
++using UrlShortener.Application.Links;
++
++namespace UrlShortener.UnitTests;
++
++public sealed class UrlNormalizerTests
++{
++    [Theory]
++    [InlineData("HTTP://EXAMPLE.COM:80/Keep?utm_source=a&foo=bar&utm_medium=b#Frag", "http://example.com/Keep?foo=bar#Frag")]
++    [InlineData("HTTPS://EXAMPLE.COM:443/a?UTM_source=x&utm_source=y&keep=1", "https://example.com/a?UTM_source=x&keep=1")]
++    [InlineData("http://EXAMPLE.com:8080/a?utm_source=x&keep=1", "http://example.com:8080/a?keep=1")]
++    public void Normalize_applies_requested_changes_and_preserves_other_components(string input, string expected)
++    {
++        Assert.Equal(expected, UrlNormalizer.Normalize(input));
++    }
++}

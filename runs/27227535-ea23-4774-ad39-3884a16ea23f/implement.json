@@ -1,0 +1,6 @@
+{
+  "summary": "Unable to implement the URL normalizer because no source files were provided.",
+  "rationale": "The supplied currentFiles array is empty, so I cannot inspect or safely modify LinkService or verify its existing interfaces and behavior. Adding an unconnected helper would not normalize URLs before they are saved, and replacing an unknown service file could break compilation or existing tests.",
+  "content": "No files were changed. Please provide the existing source files, especially LinkService and its related application-layer types, so the normalization can be integrated without changing unrelated behavior.",
+  "files": []
+}

@@ -1,0 +1,737 @@
+diff --git a/docs/features/per-link-click-limits.md b/docs/features/per-link-click-limits.md
+new file mode 100644
+index 0000000..1f1448f
+--- /dev/null
++++ b/docs/features/per-link-click-limits.md
+@@ -0,0 +1,74 @@
++# Per-link click limits
++
++## What it does
++
++When creating a short link, you can optionally set `maxClicks` to an integer from **1 through 1,000,000**. Each successful redirect records a click before returning the redirect response. Once the recorded click count reaches the limit, subsequent redirect requests return **410 Gone** instead of redirecting.
++
++Omitting `maxClicks` (or supplying `null`) leaves the link unlimited, as before. The limit is enforced using persisted click counts, not the redirect cache. A rejected over-limit request does not record another click.
++
++## API usage
++
++### Create a limited link
++
++Send `maxClicks` in the JSON body of `POST /api/v1/links`:
++
++```http
++POST /api/v1/links
++Content-Type: application/json
++
++{
++  "longUrl": "https://example.com/docs",
++  "maxClicks": 2
++}
++```
++
++A successful request returns the existing link-creation response shape; the response does not include `maxClicks`:
++
++```http
++HTTP/1.1 201 Created
++Content-Type: application/json
++Location: /api/v1/links/Ab3xYz9
++
++{
++  "code": "Ab3xYz9",
++  "shortUrl": "http://localhost/Ab3xYz9",
++  "longUrl": "https://example.com/docs",
++  "createdAt": "2026-10-20T12:00:00Z",
++  "expiresAt": null
++}
++```
++
++The first two requests to `http://localhost/Ab3xYz9` return **302 Found** and redirect to the target URL. A later request, after two clicks have been recorded, returns **410 Gone** with RFC 7807 ProblemDetails:
++
++```http
++HTTP/1.1 410 Gone
++Content-Type: application/problem+json
++
++{
++  "type": "about:blank",
++  "title": "Gone",
++  "status": 410,
++  "detail": "Link has reached its maxClicks limit."
++}
++```
++
++A `maxClicks` value outside the inclusive range 1–1,000,000 is rejected with **400 Bad Request** and validation ProblemDetails. The field is optional; links created without it continue to allow redirects without a click threshold.
++
++## Configuration and operations
++
++There is no global click-limit setting. `maxClicks` is configured independently for each link in its create request.
++
++The limit is stored in the `ShortLinks.MaxClicks` database column. The `20261020120000_AddMaxClicks` migration adds this nullable column; existing rows remain `NULL` and therefore unlimited. Development automatically applies database migrations at startup. **In other environments, apply the migration as part of deploying the updated application** so the database schema matches the application version.
++
++Other relevant settings:
++
++- `ConnectionStrings:Shortener` selects the SQLite database; the default is `Data Source=urlshortener.db`.
++- `PublicBaseUrl` controls the base URL used in generated short URLs. If unset, the request scheme and host are used.
++- `RateLimiting:PermitLimit` and `RateLimiting:WindowSeconds` configure the per-client-IP create-link rate limit. Defaults are 30 requests per 60 seconds. This rate limit is separate from per-link click limits.
++
++## Limitations
++
++- The create response and link-details response do not expose the configured `maxClicks`; link details expose the recorded click count only.
++- Click recording is synchronous with redirect handling. A successful redirect waits for the click count and event to be persisted; if persistence fails, the request does not proceed as a successful redirect.
++- Redirect availability checks still apply: expired or disabled links also return 410, and unknown codes return 404. These conditions are independent of the click limit.
++- Successful redirects return 302 and use `Cache-Control: no-store`, so browser caching should not bypass later limit checks.
+diff --git a/src/UrlShortener.Api/LinkEndpoints.cs b/src/UrlShortener.Api/LinkEndpoints.cs
+index bdbdf5a..047a439 100644
+--- a/src/UrlShortener.Api/LinkEndpoints.cs
++++ b/src/UrlShortener.Api/LinkEndpoints.cs
+@@ -25,7 +25,7 @@ public static class LinkEndpoints
+             .WithSummary("Create a short link")
+             .WithDescription("Creates a short link to an absolute http(s) URL of at most 2,048 characters (javascript:, data: and this service's own host are rejected). "
+                 + "customAlias is optional: 3-30 characters from A-Z, a-z, 0-9, '_' and '-', and not 'api', 'health' or 'swagger'; without it a random 7-character Base62 code is generated. "
+-                + "expiresAt is optional and must be a future UTC timestamp ending in 'Z'. Creation is rate limited per client IP.")
++                + "expiresAt is optional and must be a future UTC timestamp ending in 'Z'. maxClicks is optional and, when supplied, must be an integer from 1 through 1,000,000. Creation is rate limited per client IP.")
+             .WithOpenApi(operation =>
+             {
+                 var header = operation.Parameters.FirstOrDefault(p => p.Name == "Idempotency-Key");
+@@ -47,7 +47,7 @@ public static class LinkEndpoints
+         links.MapGet("/{code}/stats", async (string code, LinkService service, CancellationToken ct) =>
+             Results.Ok(await service.GetStatsAsync(code, ct)))
+             .WithName("GetLinkStats").WithSummary("Get click statistics")
+-            .WithDescription("Total clicks, clicks per UTC day and the top 10 referrers. Clicks are recorded in the background, so totals can lag a redirect briefly.")
++            .WithDescription("Total clicks, clicks per UTC day and the top 10 referrers. Successful redirects are recorded before the redirect response is returned.")
+             .WithOpenApi().Produces<LinkStats>().ProducesProblem(404);
+ 
+         links.MapDelete("/{code}", async (string code, LinkService service, CancellationToken ct) =>
+@@ -58,20 +58,20 @@ public static class LinkEndpoints
+             .WithDescription("Soft delete: the link and its analytics are kept, and redirects return 410 from now on.")
+             .WithOpenApi().Produces(204).ProducesProblem(404);
+ 
+-        app.MapGet("/{code}", async (string code, LinkService service, ClickQueue queue, TimeProvider clock, HttpContext context, CancellationToken ct) =>
++        app.MapGet("/{code}", async (string code, LinkService service, TimeProvider clock, HttpContext context, CancellationToken ct) =>
+         {
+             var link = await service.ResolveAsync(code, ct);
+             var address = context.Connection.RemoteIpAddress;
+             var hash = address is null ? null : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(address.ToString())));
+             var click = new ClickEvent(link.Id, clock.GetUtcNow().UtcDateTime, hash,
+                 context.Request.Headers.Referer.ToString(), context.Request.Headers.UserAgent.ToString());
+-            if (!queue.TryWrite(click)) throw new LinkOperationException(503, "Click recording is busy. Please retry.");
++            await service.RecordClickAsync(click, ct);
+             // Prevent browser caching from bypassing subsequent expiry/disable checks and analytics.
+             context.Response.Headers.CacheControl = "no-store";
+             return Results.Redirect(link.LongUrl);
+         }).WithTags("Redirect").WithName("RedirectLink").WithSummary("Follow a short link")
+-            .WithDescription("Redirects with 302 to the target URL and records the click in the background (the client IP is stored only as a SHA-256 hash). "
+-                + "Returns 404 for an unknown code and 410 when the link has expired or been disabled. "
++            .WithDescription("Redirects with 302 to the target URL and records the click before returning the response (the client IP is stored only as a SHA-256 hash). "
++                + "Returns 404 for an unknown code and 410 when the link has expired, been disabled, or has reached its maxClicks limit. "
+                 + "Swagger's 'Try it out' cannot show this redirect, because the browser follows it to another origin; open the short URL directly instead.")
+             .WithOpenApi(operation =>
+             {
+diff --git a/src/UrlShortener.Api/Program.cs b/src/UrlShortener.Api/Program.cs
+index 00f26ff..7b5fa2e 100644
+--- a/src/UrlShortener.Api/Program.cs
++++ b/src/UrlShortener.Api/Program.cs
+@@ -2,6 +2,7 @@ using System.Threading.RateLimiting;
+ using FluentValidation;
+ using Microsoft.AspNetCore.Diagnostics;
+ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
++using Microsoft.AspNetCore.Mvc;
+ using Microsoft.AspNetCore.RateLimiting;
+ using Microsoft.EntityFrameworkCore;
+ using Serilog;
+@@ -18,8 +19,6 @@ builder.Services.AddSingleton(TimeProvider.System);
+ builder.Services.AddSingleton<ICodeGenerator, Base62CodeGenerator>();
+ builder.Services.AddScoped<IValidator<CreateLinkRequest>, CreateLinkValidator>();
+ builder.Services.AddScoped<LinkService>();
+-builder.Services.AddSingleton<ClickQueue>();
+-builder.Services.AddHostedService<ClickRecorder>();
+ builder.Services.AddProblemDetails();
+ builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
+ builder.Services.AddEndpointsApiExplorer();
+@@ -68,9 +67,15 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
+     var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+     IResult result = exception switch
+     {
+-        ValidationException validation => Results.ValidationProblem(validation.Errors.GroupBy(x => x.PropertyName)
+-            .ToDictionary(x => x.Key, x => x.Select(e => e.ErrorMessage).ToArray())),
+-        LinkOperationException operation => Results.Problem(statusCode: operation.StatusCode, detail: operation.Message),
++        ValidationException validation => Results.Problem(new HttpValidationProblemDetails(validation.Errors.GroupBy(x => x.PropertyName)
++            .ToDictionary(x => x.Key, x => x.Select(e => e.ErrorMessage).ToArray()))
++        {
++            Type = "about:blank",
++            Title = "One or more validation errors occurred.",
++            Status = StatusCodes.Status400BadRequest
++        }),
++        LinkOperationException operation => Results.Problem(statusCode: operation.StatusCode,
++            type: "about:blank", title: ProblemTitle(operation.StatusCode), detail: operation.Message),
+         BadHttpRequestException bad => Results.Problem(statusCode: bad.StatusCode, detail: "The request body or parameters are invalid."),
+         _ => Results.Problem(statusCode: 500, detail: "An unexpected server error occurred.")
+     };
+@@ -86,4 +91,14 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => fa
+ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready"), ResponseWriter = HealthResponses.WriteAsync });
+ app.Run();
+ 
++static string ProblemTitle(int statusCode) => statusCode switch
++{
++    StatusCodes.Status400BadRequest => "Bad Request",
++    StatusCodes.Status404NotFound => "Not Found",
++    StatusCodes.Status409Conflict => "Conflict",
++    StatusCodes.Status410Gone => "Gone",
++    StatusCodes.Status503ServiceUnavailable => "Service Unavailable",
++    _ => "Request failed"
++};
++
+ public partial class Program { }
+diff --git a/src/UrlShortener.Application/Links/Contracts.cs b/src/UrlShortener.Application/Links/Contracts.cs
+index bb9032e..b8e96c7 100644
+--- a/src/UrlShortener.Application/Links/Contracts.cs
++++ b/src/UrlShortener.Application/Links/Contracts.cs
+@@ -2,7 +2,7 @@ using UrlShortener.Domain;
+ 
+ namespace UrlShortener.Application.Links;
+ 
+-public sealed record CreateLinkRequest(string LongUrl, string? CustomAlias = null, DateTime? ExpiresAt = null);
++public sealed record CreateLinkRequest(string LongUrl, string? CustomAlias = null, DateTime? ExpiresAt = null, int? MaxClicks = null);
+ public sealed record LinkResponse(string Code, string ShortUrl, string LongUrl, DateTime CreatedAt, DateTime? ExpiresAt);
+ public sealed record LinkDetails(string Code, string ShortUrl, string LongUrl, DateTime CreatedAt, DateTime? ExpiresAt, bool IsActive, long ClickCount);
+ public sealed record DailyClicks(DateTime Date, long Clicks);
+diff --git a/src/UrlShortener.Application/Links/CreateLinkValidator.cs b/src/UrlShortener.Application/Links/CreateLinkValidator.cs
+index e30c30f..d4a1f51 100644
+--- a/src/UrlShortener.Application/Links/CreateLinkValidator.cs
++++ b/src/UrlShortener.Application/Links/CreateLinkValidator.cs
+@@ -20,5 +20,7 @@ public sealed class CreateLinkValidator : AbstractValidator<CreateLinkRequest>
+         });
+         RuleFor(x => x.ExpiresAt).Must(value => value is null || value.Value.Kind == DateTimeKind.Utc)
+             .WithMessage("Expiry must use a UTC timestamp with a Z suffix.");
++        RuleFor(x => x.MaxClicks).Must(value => value is null || value is >= 1 and <= 1_000_000)
++            .WithMessage("maxClicks must be between 1 and 1,000,000.");
+     }
+ }
+diff --git a/src/UrlShortener.Application/Links/LinkService.cs b/src/UrlShortener.Application/Links/LinkService.cs
+index 9dc8532..21f0473 100644
+--- a/src/UrlShortener.Application/Links/LinkService.cs
++++ b/src/UrlShortener.Application/Links/LinkService.cs
+@@ -8,10 +8,38 @@ using UrlShortener.Domain;
+ 
+ namespace UrlShortener.Application.Links;
+ 
+-public sealed class LinkService(IValidator<CreateLinkRequest> validator, ILinkCreationRepository creation,
+-    IShortLinkRepository links, IRedirectStore redirects, ILinkStatsRepository stats,
+-    ICodeGenerator generator, TimeProvider clock)
++public sealed class LinkService
+ {
++    private readonly IValidator<CreateLinkRequest> validator;
++    private readonly ILinkCreationRepository creation;
++    private readonly IShortLinkRepository links;
++    private readonly IRedirectStore redirects;
++    private readonly ILinkStatsRepository stats;
++    private readonly ICodeGenerator generator;
++    private readonly TimeProvider clock;
++    private readonly IClickEventRepository? clicks;
++
++    public LinkService(IValidator<CreateLinkRequest> validator, ILinkCreationRepository creation,
++        IShortLinkRepository links, IRedirectStore redirects, ILinkStatsRepository stats,
++        ICodeGenerator generator, TimeProvider clock)
++        : this(validator, creation, links, redirects, stats, generator, clock, null)
++    {
++    }
++
++    public LinkService(IValidator<CreateLinkRequest> validator, ILinkCreationRepository creation,
++        IShortLinkRepository links, IRedirectStore redirects, ILinkStatsRepository stats,
++        ICodeGenerator generator, TimeProvider clock, IClickEventRepository? clicks)
++    {
++        this.validator = validator;
++        this.creation = creation;
++        this.links = links;
++        this.redirects = redirects;
++        this.stats = stats;
++        this.generator = generator;
++        this.clock = clock;
++        this.clicks = clicks;
++    }
++
+     public async Task<ShortLink> CreateAsync(CreateLinkRequest request, string? key,
+         IReadOnlyCollection<string> ownHosts, CancellationToken ct = default)
+     {
+@@ -37,7 +65,7 @@ public sealed class LinkService(IValidator<CreateLinkRequest> validator, ILinkCr
+         {
+             var code = request.CustomAlias ?? generator.Generate();
+             if (request.CustomAlias is null && new[] { "api", "health", "swagger" }.Contains(code, StringComparer.OrdinalIgnoreCase)) continue;
+-            var result = await creation.TryCreateAsync(new ShortLink(code, request.LongUrl, now, request.ExpiresAt), key, hash, ct);
++            var result = await creation.TryCreateAsync(new ShortLink(code, request.LongUrl, now, request.ExpiresAt, request.MaxClicks), key, hash, ct);
+             if (result.Status is CreationStatus.Created or CreationStatus.Replayed) return result.Link!;
+             if (result.Status == CreationStatus.KeyConflict) throw new LinkOperationException(409, "Idempotency-Key was used with a different request.");
+             if (request.CustomAlias is not null) throw new LinkOperationException(409, "The custom alias is already taken.");
+@@ -58,6 +86,25 @@ public sealed class LinkService(IValidator<CreateLinkRequest> validator, ILinkCr
+         return link;
+     }
+ 
++    public async Task RecordClickAsync(ClickEvent clickEvent, CancellationToken ct = default)
++    {
++        if (clicks is null)
++            throw new InvalidOperationException("Click recording is not configured.");
++
++        var result = await clicks.RecordWithLimitAsync(clickEvent, ct);
++        switch (result)
++        {
++            case ClickRecordingResult.Recorded:
++                return;
++            case ClickRecordingResult.LimitReached:
++                throw new LinkOperationException(410, "Link has reached its maxClicks limit.");
++            case ClickRecordingResult.MissingLink:
++                throw new LinkOperationException(404, "Link not found.");
++            default:
++                throw new InvalidOperationException("Unknown click-recording result.");
++        }
++    }
++
+     public async Task DisableAsync(string code, CancellationToken ct = default)
+     {
+         if (!await redirects.DisableAsync(code, ct)) throw new LinkOperationException(404, "Link not found.");
+diff --git a/src/UrlShortener.Application/Repositories/IClickEventRepository.cs b/src/UrlShortener.Application/Repositories/IClickEventRepository.cs
+index 9c15b07..d6ae5a1 100644
+--- a/src/UrlShortener.Application/Repositories/IClickEventRepository.cs
++++ b/src/UrlShortener.Application/Repositories/IClickEventRepository.cs
+@@ -2,10 +2,24 @@ using UrlShortener.Domain;
+ 
+ namespace UrlShortener.Application.Repositories;
+ 
++public enum ClickRecordingResult
++{
++    Recorded,
++    LimitReached,
++    MissingLink
++}
++
+ public interface IClickEventRepository
+ {
+-    // Atomically persists the event and increments the total. False means the link no longer exists.
++    // Atomically persists the event and increments the total. False means the link no longer exists or is limited.
+     Task<bool> RecordAsync(ClickEvent clickEvent, CancellationToken cancellationToken = default);
++
++    // Kept as a default implementation so existing repository implementations remain source-compatible.
++    async Task<ClickRecordingResult> RecordWithLimitAsync(ClickEvent clickEvent, CancellationToken cancellationToken = default) =>
++        await RecordAsync(clickEvent, cancellationToken)
++            ? ClickRecordingResult.Recorded
++            : ClickRecordingResult.MissingLink;
++
+     Task<IReadOnlyList<ClickEvent>> GetByShortLinkIdAsync(long shortLinkId,
+         CancellationToken cancellationToken = default);
+ }
+diff --git a/src/UrlShortener.Domain/ShortLink.cs b/src/UrlShortener.Domain/ShortLink.cs
+index 904ff39..0ab3acf 100644
+--- a/src/UrlShortener.Domain/ShortLink.cs
++++ b/src/UrlShortener.Domain/ShortLink.cs
+@@ -4,7 +4,7 @@ public sealed class ShortLink
+ {
+     private ShortLink() { }
+ 
+-    public ShortLink(string code, string longUrl, DateTime createdAtUtc, DateTime? expiresAtUtc = null)
++    public ShortLink(string code, string longUrl, DateTime createdAtUtc, DateTime? expiresAtUtc = null, int? maxClicks = null)
+     {
+         ArgumentException.ThrowIfNullOrWhiteSpace(code);
+         if (code.Length is < 3 or > 30 || code.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '_' and not '-'))
+@@ -35,10 +35,16 @@ public sealed class ShortLink
+             }
+         }
+ 
++        if (maxClicks is not null and ( < 1 or > 1_000_000))
++        {
++            throw new ArgumentOutOfRangeException(nameof(maxClicks), "Maximum clicks must be between 1 and 1,000,000.");
++        }
++
+         Code = code;
+         LongUrl = longUrl;
+         CreatedAtUtc = createdAtUtc;
+         ExpiresAtUtc = expiresAtUtc;
++        MaxClicks = maxClicks;
+     }
+ 
+     public long Id { get; private set; }
+@@ -48,6 +54,7 @@ public sealed class ShortLink
+     public DateTime? ExpiresAtUtc { get; private set; }
+     public bool IsActive { get; private set; } = true;
+     public long ClickCount { get; private set; }
++    public int? MaxClicks { get; private set; }
+ 
+     public void Disable() => IsActive = false;
+ 
+diff --git a/src/UrlShortener.Infrastructure/AppDbContext.cs b/src/UrlShortener.Infrastructure/AppDbContext.cs
+index 7983117..528aff6 100644
+--- a/src/UrlShortener.Infrastructure/AppDbContext.cs
++++ b/src/UrlShortener.Infrastructure/AppDbContext.cs
+@@ -30,6 +30,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
+         links.Property(link => link.LongUrl).HasMaxLength(2048).IsRequired();
+         links.Property(link => link.CreatedAtUtc).HasConversion(utc);
+         links.Property(link => link.ExpiresAtUtc).HasConversion(utc);
++        links.Property(link => link.MaxClicks);
+ 
+         var clicks = modelBuilder.Entity<ClickEvent>();
+         clicks.ToTable("ClickEvents");
+diff --git a/src/UrlShortener.Infrastructure/Migrations/20261020120000_AddMaxClicks.cs b/src/UrlShortener.Infrastructure/Migrations/20261020120000_AddMaxClicks.cs
+new file mode 100644
+index 0000000..ba9dee9
+--- /dev/null
++++ b/src/UrlShortener.Infrastructure/Migrations/20261020120000_AddMaxClicks.cs
+@@ -0,0 +1,28 @@
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace UrlShortener.Infrastructure.Migrations
++{
++    [DbContext(typeof(AppDbContext))]
++    [Migration("20261020120000_AddMaxClicks")]
++    public partial class AddMaxClicks : Migration
++    {
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.AddColumn<int>(
++                name: "MaxClicks",
++                table: "ShortLinks",
++                type: "INTEGER",
++                nullable: true);
++        }
++
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropColumn(
++                name: "MaxClicks",
++                table: "ShortLinks");
++        }
++    }
++}
+diff --git a/src/UrlShortener.Infrastructure/Migrations/AppDbContextModelSnapshot.cs b/src/UrlShortener.Infrastructure/Migrations/AppDbContextModelSnapshot.cs
+index 5c8c829..174fa23 100644
+--- a/src/UrlShortener.Infrastructure/Migrations/AppDbContextModelSnapshot.cs
++++ b/src/UrlShortener.Infrastructure/Migrations/AppDbContextModelSnapshot.cs
+@@ -1,4 +1,4 @@
+-﻿// <auto-generated />
++// <auto-generated />
+ using System;
+ using Microsoft.EntityFrameworkCore;
+ using Microsoft.EntityFrameworkCore.Infrastructure;
+@@ -74,6 +74,9 @@ namespace UrlShortener.Infrastructure.Migrations
+                         .HasMaxLength(2048)
+                         .HasColumnType("TEXT");
+ 
++                    b.Property<int?>("MaxClicks")
++                        .HasColumnType("INTEGER");
++
+                     b.HasKey("Id");
+ 
+                     b.HasIndex("Code")
+diff --git a/src/UrlShortener.Infrastructure/Repositories/ClickEventRepository.cs b/src/UrlShortener.Infrastructure/Repositories/ClickEventRepository.cs
+index de76d9d..efb8b9a 100644
+--- a/src/UrlShortener.Infrastructure/Repositories/ClickEventRepository.cs
++++ b/src/UrlShortener.Infrastructure/Repositories/ClickEventRepository.cs
+@@ -6,7 +6,10 @@ namespace UrlShortener.Infrastructure.Repositories;
+ 
+ public sealed class ClickEventRepository(AppDbContext db) : IClickEventRepository
+ {
+-    public async Task<bool> RecordAsync(ClickEvent clickEvent, CancellationToken cancellationToken = default)
++    public async Task<bool> RecordAsync(ClickEvent clickEvent, CancellationToken cancellationToken = default) =>
++        await RecordWithLimitAsync(clickEvent, cancellationToken) == ClickRecordingResult.Recorded;
++
++    public async Task<ClickRecordingResult> RecordWithLimitAsync(ClickEvent clickEvent, CancellationToken cancellationToken = default)
+     {
+         ArgumentNullException.ThrowIfNull(clickEvent);
+         if (clickEvent.Id != 0)
+@@ -15,11 +18,14 @@ public sealed class ClickEventRepository(AppDbContext db) : IClickEventRepositor
+         }
+ 
+         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+-        var affected = await db.ShortLinks.Where(link => link.Id == clickEvent.ShortLinkId)
++        var affected = await db.ShortLinks
++            .Where(link => link.Id == clickEvent.ShortLinkId && (link.MaxClicks == null || link.ClickCount < link.MaxClicks))
+             .ExecuteUpdateAsync(update => update.SetProperty(link => link.ClickCount, link => link.ClickCount + 1), cancellationToken);
+         if (affected == 0)
+         {
+-            return false;
++            var exists = await db.ShortLinks.AnyAsync(link => link.Id == clickEvent.ShortLinkId, cancellationToken);
++            await transaction.RollbackAsync(cancellationToken);
++            return exists ? ClickRecordingResult.LimitReached : ClickRecordingResult.MissingLink;
+         }
+ 
+         db.ClickEvents.Add(clickEvent);
+@@ -27,7 +33,7 @@ public sealed class ClickEventRepository(AppDbContext db) : IClickEventRepositor
+         {
+             await db.SaveChangesAsync(cancellationToken);
+             await transaction.CommitAsync(cancellationToken);
+-            return true;
++            return ClickRecordingResult.Recorded;
+         }
+         catch
+         {
+diff --git a/tests/UrlShortener.IntegrationTests/MaxClicksApiTests.cs b/tests/UrlShortener.IntegrationTests/MaxClicksApiTests.cs
+new file mode 100644
+index 0000000..00dc33c
+--- /dev/null
++++ b/tests/UrlShortener.IntegrationTests/MaxClicksApiTests.cs
+@@ -0,0 +1,129 @@
++using System.Net;
++using System.Net.Http.Json;
++using System.Text.Json;
++using UrlShortener.Application.Links;
++using Xunit;
++
++namespace UrlShortener.IntegrationTests;
++
++public sealed class MaxClicksApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
++{
++    [Fact]
++    public async Task LimitedLinkRedirectsUpToItsLimitThenReturnsGoneProblemDetails()
++    {
++        using var client = factory.Client();
++        var link = await CreateLinkAsync(client, maxClicks: 2);
++
++        using var first = await client.GetAsync($"/{link.Code}");
++        Assert.Equal(HttpStatusCode.Found, first.StatusCode);
++        Assert.Equal(link.LongUrl, first.Headers.Location!.AbsoluteUri);
++
++        using var second = await client.GetAsync($"/{link.Code}");
++        Assert.Equal(HttpStatusCode.Found, second.StatusCode);
++        Assert.Equal(link.LongUrl, second.Headers.Location!.AbsoluteUri);
++
++        using var overLimit = await client.GetAsync($"/{link.Code}");
++        var problem = await AssertProblemAsync(overLimit, HttpStatusCode.Gone);
++        Assert.Equal("Gone", problem.GetProperty("title").GetString());
++
++        var details = await client.GetFromJsonAsync<LinkDetails>($"/api/v1/links/{link.Code}");
++        Assert.NotNull(details);
++        Assert.Equal(2, details.ClickCount);
++
++        var stats = await client.GetFromJsonAsync<LinkStats>($"/api/v1/links/{link.Code}/stats");
++        Assert.NotNull(stats);
++        Assert.Equal(2, stats.TotalClicks);
++    }
++
++    [Fact]
++    public async Task LinkWithLimitOfOneAllowsExactlyOneRedirect()
++    {
++        using var client = factory.Client();
++        var link = await CreateLinkAsync(client, maxClicks: 1);
++
++        using var first = await client.GetAsync($"/{link.Code}");
++        Assert.Equal(HttpStatusCode.Found, first.StatusCode);
++
++        using var second = await client.GetAsync($"/{link.Code}");
++        var problem = await AssertProblemAsync(second, HttpStatusCode.Gone);
++        Assert.Equal("Gone", problem.GetProperty("title").GetString());
++
++        var details = await client.GetFromJsonAsync<LinkDetails>($"/api/v1/links/{link.Code}");
++        Assert.NotNull(details);
++        Assert.Equal(1, details.ClickCount);
++    }
++
++    [Fact]
++    public async Task LinkWithoutLimitContinuesRedirectingAndRecordingClicks()
++    {
++        using var client = factory.Client();
++        var link = await CreateLinkAsync(client);
++
++        for (var i = 0; i < 3; i++)
++        {
++            using var redirect = await client.GetAsync($"/{link.Code}");
++            Assert.Equal(HttpStatusCode.Found, redirect.StatusCode);
++            Assert.Equal(link.LongUrl, redirect.Headers.Location!.AbsoluteUri);
++        }
++
++        var details = await client.GetFromJsonAsync<LinkDetails>($"/api/v1/links/{link.Code}");
++        Assert.NotNull(details);
++        Assert.Equal(3, details.ClickCount);
++
++        var stats = await client.GetFromJsonAsync<LinkStats>($"/api/v1/links/{link.Code}/stats");
++        Assert.NotNull(stats);
++        Assert.Equal(3, stats.TotalClicks);
++    }
++
++    [Fact]
++    public async Task CreateAcceptsMaximumAllowedLimit()
++    {
++        using var client = factory.Client();
++        var link = await CreateLinkAsync(client, maxClicks: 1_000_000);
++
++        using var redirect = await client.GetAsync($"/{link.Code}");
++
++        Assert.Equal(HttpStatusCode.Found, redirect.StatusCode);
++        Assert.Equal(link.LongUrl, redirect.Headers.Location!.AbsoluteUri);
++    }
++
++    [Theory]
++    [InlineData(-1)]
++    [InlineData(0)]
++    [InlineData(1_000_001)]
++    public async Task CreateRejectsLimitOutsideAllowedRange(int maxClicks)
++    {
++        using var client = factory.Client();
++        using var response = await client.PostAsJsonAsync("/api/v1/links", new CreateLinkRequest(
++            "https://example.com/max-clicks-invalid", MaxClicks: maxClicks));
++
++        var problem = await AssertProblemAsync(response, HttpStatusCode.BadRequest);
++        Assert.True(problem.TryGetProperty("errors", out var errors));
++        Assert.Contains(errors.EnumerateObject(), error => error.Name == "MaxClicks");
++    }
++
++    private static async Task<LinkResponse> CreateLinkAsync(HttpClient client, int? maxClicks = null)
++    {
++        var request = new CreateLinkRequest(
++            $"https://example.com/max-clicks/{Guid.NewGuid():N}",
++            MaxClicks: maxClicks);
++        using var response = await client.PostAsJsonAsync("/api/v1/links", request);
++        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
++
++        var link = await response.Content.ReadFromJsonAsync<LinkResponse>();
++        Assert.NotNull(link);
++        return link;
++    }
++
++    private static async Task<JsonElement> AssertProblemAsync(HttpResponseMessage response, HttpStatusCode expectedStatus)
++    {
++        Assert.Equal(expectedStatus, response.StatusCode);
++        Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
++
++        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
++        Assert.Equal((int)expectedStatus, problem.GetProperty("status").GetInt32());
++        Assert.True(problem.TryGetProperty("title", out var title));
++        Assert.False(string.IsNullOrWhiteSpace(title.GetString()));
++        return problem;
++    }
++}
+diff --git a/tests/UrlShortener.UnitTests/MaxClicksTests.cs b/tests/UrlShortener.UnitTests/MaxClicksTests.cs
+new file mode 100644
+index 0000000..1a6b5a6
+--- /dev/null
++++ b/tests/UrlShortener.UnitTests/MaxClicksTests.cs
+@@ -0,0 +1,132 @@
++using FluentValidation;
++using UrlShortener.Application.Links;
++using UrlShortener.Application.Repositories;
++using UrlShortener.Domain;
++using Xunit;
++
++namespace UrlShortener.UnitTests;
++
++public sealed class MaxClicksTests
++{
++    private static readonly DateTime Now = new(2026, 10, 17, 12, 0, 0, DateTimeKind.Utc);
++
++    [Theory]
++    [InlineData(1)]
++    [InlineData(1_000_000)]
++    public async Task ValidatorAcceptsMaxClicksAtInclusiveBoundaries(int maxClicks)
++    {
++        var validator = new CreateLinkValidator();
++
++        var result = await validator.ValidateAsync(
++            new CreateLinkRequest("https://example.com/target", MaxClicks: maxClicks));
++
++        Assert.True(result.IsValid);
++    }
++
++    [Fact]
++    public async Task ValidatorAcceptsAnOmittedMaxClicksLimit()
++    {
++        var validator = new CreateLinkValidator();
++
++        var result = await validator.ValidateAsync(new CreateLinkRequest("https://example.com/target"));
++
++        Assert.True(result.IsValid);
++    }
++
++    [Theory]
++    [InlineData(-1)]
++    [InlineData(0)]
++    [InlineData(1_000_001)]
++    public async Task ValidatorRejectsMaxClicksOutsideInclusiveBounds(int maxClicks)
++    {
++        var validator = new CreateLinkValidator();
++
++        var result = await validator.ValidateAsync(
++            new CreateLinkRequest("https://example.com/target", MaxClicks: maxClicks));
++
++        Assert.False(result.IsValid);
++        Assert.Contains(result.Errors, error => error.PropertyName == nameof(CreateLinkRequest.MaxClicks));
++    }
++
++    [Theory]
++    [InlineData(1)]
++    [InlineData(1_000_000)]
++    public void DomainStoresMaxClicksAtInclusiveBoundaries(int maxClicks)
++    {
++        var link = new ShortLink("limit-test", "https://example.com/target", Now, maxClicks: maxClicks);
++
++        Assert.Equal(maxClicks, link.MaxClicks);
++        Assert.Equal(0, link.ClickCount);
++    }
++
++    [Theory]
++    [InlineData(-1)]
++    [InlineData(0)]
++    [InlineData(1_000_001)]
++    public void DomainRejectsMaxClicksOutsideInclusiveBounds(int maxClicks)
++    {
++        Assert.Throws<ArgumentOutOfRangeException>(() =>
++            new ShortLink("limit-test", "https://example.com/target", Now, maxClicks: maxClicks));
++    }
++
++    [Theory]
++    [InlineData(ClickRecordingResult.Recorded, null)]
++    [InlineData(ClickRecordingResult.LimitReached, 410)]
++    [InlineData(ClickRecordingResult.MissingLink, 404)]
++    public async Task ServiceMapsClickRecordingResults(ClickRecordingResult result, int? expectedStatus)
++    {
++        var repository = new ResultRepository(result);
++        var service = CreateService(repository);
++        var click = new ClickEvent(1, Now);
++
++        if (expectedStatus is null)
++        {
++            await service.RecordClickAsync(click);
++        }
++        else
++        {
++            var exception = await Assert.ThrowsAsync<LinkOperationException>(
++                () => service.RecordClickAsync(click));
++            Assert.Equal(expectedStatus, exception.StatusCode);
++        }
++
++        Assert.Same(click, repository.RecordedClick);
++    }
++
++    [Fact]
++    public async Task ServiceReportsMissingClickRepositoryConfiguration()
++    {
++        var service = new LinkService(
++            null!, null!, null!, null!, null!, null!, TimeProvider.System);
++
++        await Assert.ThrowsAsync<InvalidOperationException>(
++            () => service.RecordClickAsync(new ClickEvent(1, Now)));
++    }
++
++    private static LinkService CreateService(IClickEventRepository repository) =>
++        new(null!, null!, null!, null!, null!, null!, TimeProvider.System, repository);
++
++    private sealed class ResultRepository(ClickRecordingResult result) : IClickEventRepository
++    {
++        public ClickEvent? RecordedClick { get; private set; }
++
++        public Task<bool> RecordAsync(ClickEvent clickEvent, CancellationToken cancellationToken = default)
++        {
++            RecordedClick = clickEvent;
++            return Task.FromResult(result == ClickRecordingResult.Recorded);
++        }
++
++        public Task<ClickRecordingResult> RecordWithLimitAsync(
++            ClickEvent clickEvent,
++            CancellationToken cancellationToken = default)
++        {
++            RecordedClick = clickEvent;
++            return Task.FromResult(result);
++        }
++
++        public Task<IReadOnlyList<ClickEvent>> GetByShortLinkIdAsync(
++            long shortLinkId,
++            CancellationToken cancellationToken = default) =>
++            Task.FromResult<IReadOnlyList<ClickEvent>>(Array.Empty<ClickEvent>());
++    }
++}

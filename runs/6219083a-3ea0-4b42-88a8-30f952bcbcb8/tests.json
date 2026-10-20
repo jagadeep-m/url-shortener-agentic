@@ -1,0 +1,11 @@
+{
+  "summary": "Added integration failure-path coverage for HTTP(S) URLs that omit the required authority separator or host.",
+  "rationale": "The tests exercise the validator\u2019s \u0060://\u0060 requirement through the API and assert RFC 7807 validation responses. This stage is limited to tests, so it does not change source code or documentation; the requested documentation update remains outside the Tester file boundary.",
+  "content": "Added a new integration test class that checks malformed HTTP(S) URL forms return a 400 ProblemDetails response, rather than reaching URL normalization.",
+  "files": [
+    {
+      "path": "tests/UrlShortener.IntegrationTests/UrlValidationBoundaryTests.cs",
+      "content": "using System.Net;\nusing System.Net.Http.Json;\nusing System.Text.Json;\nusing UrlShortener.Application.Links;\nusing Xunit;\n\nnamespace UrlShortener.IntegrationTests;\n\npublic sealed class UrlValidationBoundaryTests(ApiFactory factory) : IClassFixture\u003CApiFactory\u003E\n{\n    [Theory]\n    [InlineData(\u0022http:example.com/path\u0022)]\n    [InlineData(\u0022https:/example.com/path\u0022)]\n    [InlineData(\u0022http://?utm_source=campaign\u0022)]\n    public async Task HttpUrlWithoutRequiredSeparatorOrHostReturnsValidationProblem(string url)\n    {\n        using var client = factory.Client();\n        using var response = await client.PostAsJsonAsync(\n            \u0022/api/v1/links\u0022,\n            new CreateLinkRequest(url));\n\n        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);\n        Assert.Equal(\u0022application/problem\u002Bjson\u0022, response.Content.Headers.ContentType!.MediaType);\n\n        var body = await response.Content.ReadAsStringAsync();\n        using var problemDocument = JsonDocument.Parse(body);\n        var problem = problemDocument.RootElement;\n        Assert.Equal((int)HttpStatusCode.BadRequest, problem.GetProperty(\u0022status\u0022).GetInt32());\n        Assert.True(problem.TryGetProperty(\u0022errors\u0022, out var errors));\n        Assert.True(errors.EnumerateObject().Any());\n    }\n}\n"
+    }
+  ]
+}

@@ -1,0 +1,651 @@
+diff --git a/docs/features/short-link-qr-codes.md b/docs/features/short-link-qr-codes.md
+new file mode 100644
+index 0000000..096ad54
+--- /dev/null
++++ b/docs/features/short-link-qr-codes.md
+@@ -0,0 +1,67 @@
++# QR codes for short links
++
++The QR endpoint returns an SVG QR code that points to a short link’s canonical URL. Scanning it opens the short link; the existing redirect endpoint then applies the link’s expiry and disabled-state rules.
++
++## API
++
++### Get a QR code
++
++```http
++GET /api/v1/links/{code}/qr
++```
++
++No request body or query parameters are required. Replace `{code}` with the short link’s code.
++
++Example request:
++
++```http
++GET /api/v1/links/abc1234/qr HTTP/1.1
++Host: short.example
++Accept: image/svg+xml
++```
++
++On success, the response is `200 OK` with an SVG body and this content type:
++
++```http
++Content-Type: image/svg+xml; charset=utf-8
++```
++
++The SVG encodes the canonical short URL, not the destination URL. A shortened example of the response body is shown below; the ellipsis represents generated QR module geometry and is not literal response content.
++
++```xml
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 …">
++  <!-- QR code for https://short.example/abc1234 -->
++  …
++</svg>
++```
++
++If the code does not exist, the endpoint returns `404 Not Found` using the API’s RFC 7807 ProblemDetails format. For example:
++
++```http
++HTTP/1.1 404 Not Found
++Content-Type: application/problem+json
++```
++
++```json
++{
++  "status": 404,
++  "detail": "Link not found."
++}
++```
++
++## Configuration
++
++The endpoint uses the same canonical base-URL selection as the link details and creation responses:
++
++- Set `PublicBaseUrl` to the public origin (and optional path prefix) when the application’s externally visible URL differs from the request URL. For example, set the environment variable `PublicBaseUrl` to `https://short.example`.
++- If `PublicBaseUrl` is not set, the application derives the base URL from the request scheme, host, and path base. When running behind a proxy or ingress, configure the public base URL appropriately so generated QR codes point to the public address.
++
++The configured base URL has trailing slashes removed before the link code is appended.
++
++## Behavior and limitations
++
++- The QR image is SVG (`image/svg+xml`); this endpoint does not provide a PNG format.
++- QR capacity is finite. A base URL that makes the encoded short URL exceed the encoder’s supported capacity cannot be represented as a valid QR code.
++- The endpoint uses the same link lookup behavior as the link details endpoint. A known link can therefore have a QR code even if it is expired or disabled. Scanning that code still follows the short-link route, which returns `410 Gone` for expired or disabled links.
++- The endpoint encodes the canonical URL selected by configuration or request context. An incorrect public URL configuration can produce a QR code pointing to the wrong host.
++- QR generation does not change link persistence, redirects, or analytics behavior.
+diff --git a/src/UrlShortener.Api/LinkEndpoints.cs b/src/UrlShortener.Api/LinkEndpoints.cs
+index bdbdf5a..8116021 100644
+--- a/src/UrlShortener.Api/LinkEndpoints.cs
++++ b/src/UrlShortener.Api/LinkEndpoints.cs
+@@ -44,6 +44,17 @@ public static class LinkEndpoints
+             .WithDescription("Returns the target URL, creation and expiry times (UTC), whether the link is active, and its recorded click count.")
+             .WithOpenApi().Produces<LinkDetails>().ProducesProblem(404);
+ 
++        links.MapGet("/{code}/qr", async (string code, LinkService service, IQrCodeGenerator generator,
++            HttpContext context, IConfiguration configuration, CancellationToken ct) =>
++        {
++            var link = await service.GetAsync(code, ct);
++            var shortUrl = $"{BaseUrl(context, configuration)}/{link.Code}";
++            var svg = generator.GenerateSvg(shortUrl);
++            return Results.Content(svg, "image/svg+xml", Encoding.UTF8);
++        }).WithName("GetLinkQrCode").WithSummary("Get a QR code for a short link")
++            .WithDescription("Returns an SVG QR code encoding the canonical absolute short URL for the link.")
++            .WithOpenApi().Produces(StatusCodes.Status200OK, contentType: "image/svg+xml").ProducesProblem(404);
++
+         links.MapGet("/{code}/stats", async (string code, LinkService service, CancellationToken ct) =>
+             Results.Ok(await service.GetStatsAsync(code, ct)))
+             .WithName("GetLinkStats").WithSummary("Get click statistics")
+diff --git a/src/UrlShortener.Application/Links/IQrCodeGenerator.cs b/src/UrlShortener.Application/Links/IQrCodeGenerator.cs
+new file mode 100644
+index 0000000..e05aca3
+--- /dev/null
++++ b/src/UrlShortener.Application/Links/IQrCodeGenerator.cs
+@@ -0,0 +1,6 @@
++namespace UrlShortener.Application.Links;
++
++public interface IQrCodeGenerator
++{
++    string GenerateSvg(string value);
++}
+diff --git a/src/UrlShortener.Infrastructure/DependencyInjection.cs b/src/UrlShortener.Infrastructure/DependencyInjection.cs
+index eec12a5..07828ff 100644
+--- a/src/UrlShortener.Infrastructure/DependencyInjection.cs
++++ b/src/UrlShortener.Infrastructure/DependencyInjection.cs
+@@ -1,6 +1,6 @@
+ using Microsoft.EntityFrameworkCore;
+-using UrlShortener.Application.Links;
+ using Microsoft.Extensions.DependencyInjection;
++using UrlShortener.Application.Links;
+ using UrlShortener.Application.Repositories;
+ using UrlShortener.Infrastructure.Repositories;
+ 
+@@ -18,6 +18,7 @@ public static class DependencyInjection
+         services.AddScoped<ILinkStatsRepository, LinkStatsRepository>();
+         services.AddSingleton<RedirectCache>();
+         services.AddScoped<IRedirectStore, CachedRedirectStore>();
++        services.AddSingleton<IQrCodeGenerator, QrCodeGenerator>();
+         return services;
+     }
+ }
+diff --git a/src/UrlShortener.Infrastructure/QrCodeGenerator.cs b/src/UrlShortener.Infrastructure/QrCodeGenerator.cs
+new file mode 100644
+index 0000000..7879562
+--- /dev/null
++++ b/src/UrlShortener.Infrastructure/QrCodeGenerator.cs
+@@ -0,0 +1,464 @@
++using System.Text;
++using UrlShortener.Application.Links;
++
++namespace UrlShortener.Infrastructure;
++
++/// <summary>
++/// Generates QR Code Model 2 symbols in byte mode, error-correction level L.
++/// This dependency-free implementation supports versions 1 through 10.
++/// </summary>
++public sealed class QrCodeGenerator : IQrCodeGenerator
++{
++    private readonly record struct BlockLayout(int ErrorCorrectionCodewordsPerBlock, int[] DataCodewordsPerBlock);
++
++    public string GenerateSvg(string value)
++    {
++        ArgumentNullException.ThrowIfNull(value);
++        var payload = Encoding.UTF8.GetBytes(value);
++        var version = FindVersion(payload.Length);
++        var layout = GetLayout(version);
++        var data = MakeDataCodewords(payload, version, layout.DataCodewordsPerBlock.Sum());
++        var codewords = AddErrorCorrection(data, layout);
++        var matrix = MakeSymbol(version, codewords);
++        return RenderSvg(matrix);
++    }
++
++    private static int FindVersion(int payloadLength)
++    {
++        for (var version = 1; version <= 10; version++)
++        {
++            var layout = GetLayout(version);
++            var characterCountBits = version <= 9 ? 8 : 16;
++            var requiredBits = 4 + characterCountBits + payloadLength * 8;
++            if (payloadLength < 1 << characterCountBits && requiredBits <= layout.DataCodewordsPerBlock.Sum() * 8)
++                return version;
++        }
++
++        throw new ArgumentOutOfRangeException(nameof(payloadLength), "The UTF-8 value exceeds the supported QR code capacity.");
++    }
++
++    private static BlockLayout GetLayout(int version) => version switch
++    {
++        1 => new BlockLayout(7, [19]),
++        2 => new BlockLayout(10, [34]),
++        3 => new BlockLayout(15, [55]),
++        4 => new BlockLayout(20, [80]),
++        5 => new BlockLayout(26, [108]),
++        6 => new BlockLayout(18, [68, 68]),
++        7 => new BlockLayout(20, [78, 78]),
++        8 => new BlockLayout(24, [97, 97]),
++        9 => new BlockLayout(30, [116, 116]),
++        10 => new BlockLayout(18, [68, 68, 69, 69]),
++        _ => throw new ArgumentOutOfRangeException(nameof(version))
++    };
++
++    private static byte[] MakeDataCodewords(byte[] payload, int version, int capacity)
++    {
++        var bits = new List<bool>(capacity * 8);
++        AppendBits(bits, 0b0100, 4); // Byte mode.
++        AppendBits(bits, payload.Length, version <= 9 ? 8 : 16);
++        foreach (var value in payload)
++            AppendBits(bits, value, 8);
++
++        var capacityBits = capacity * 8;
++        AppendBits(bits, 0, Math.Min(4, capacityBits - bits.Count));
++        while (bits.Count % 8 != 0)
++            bits.Add(false);
++
++        var result = new byte[capacity];
++        for (var i = 0; i < bits.Count / 8; i++)
++        {
++            byte current = 0;
++            for (var bit = 0; bit < 8; bit++)
++                current = (byte)((current << 1) | (bits[i * 8 + bit] ? 1 : 0));
++            result[i] = current;
++        }
++
++        for (var i = bits.Count / 8; i < result.Length; i++)
++            result[i] = (byte)(((i - bits.Count / 8) & 1) == 0 ? 0xEC : 0x11);
++        return result;
++    }
++
++    private static void AppendBits(List<bool> bits, int value, int length)
++    {
++        for (var bit = length - 1; bit >= 0; bit--)
++            bits.Add(((value >> bit) & 1) != 0);
++    }
++
++    private static byte[] AddErrorCorrection(byte[] data, BlockLayout layout)
++    {
++        var divisor = MakeErrorCorrectionDivisor(layout.ErrorCorrectionCodewordsPerBlock);
++        var blocks = new List<(byte[] Data, byte[] ErrorCorrection)>();
++        var offset = 0;
++        foreach (var dataLength in layout.DataCodewordsPerBlock)
++        {
++            var block = data.AsSpan(offset, dataLength).ToArray();
++            offset += dataLength;
++            blocks.Add((block, CalculateRemainder(block, divisor)));
++        }
++
++        var result = new List<byte>();
++        var maxDataLength = layout.DataCodewordsPerBlock.Max();
++        for (var i = 0; i < maxDataLength; i++)
++        {
++            foreach (var block in blocks)
++            {
++                if (i < block.Data.Length)
++                    result.Add(block.Data[i]);
++            }
++        }
++
++        for (var i = 0; i < layout.ErrorCorrectionCodewordsPerBlock; i++)
++        {
++            foreach (var block in blocks)
++                result.Add(block.ErrorCorrection[i]);
++        }
++        return result.ToArray();
++    }
++
++    private static byte[] MakeErrorCorrectionDivisor(int degree)
++    {
++        var result = new byte[degree];
++        result[degree - 1] = 1;
++        byte root = 1;
++        for (var i = 0; i < degree; i++)
++        {
++            for (var j = 0; j < degree; j++)
++            {
++                result[j] = Multiply(result[j], root);
++                if (j + 1 < degree)
++                    result[j] ^= result[j + 1];
++            }
++            root = Multiply(root, 2);
++        }
++        return result;
++    }
++
++    private static byte[] CalculateRemainder(byte[] data, byte[] divisor)
++    {
++        var result = new byte[divisor.Length];
++        foreach (var value in data)
++        {
++            var factor = (byte)(value ^ result[0]);
++            Array.Copy(result, 1, result, 0, result.Length - 1);
++            result[^1] = 0;
++            for (var i = 0; i < result.Length; i++)
++                result[i] ^= Multiply(divisor[i], factor);
++        }
++        return result;
++    }
++
++    private static byte Multiply(byte x, byte y)
++    {
++        var product = 0;
++        var left = (int)x;
++        var right = (int)y;
++        for (var i = 0; i < 8; i++)
++        {
++            if ((right & 1) != 0)
++                product ^= left;
++            right >>= 1;
++            left <<= 1;
++            if ((left & 0x100) != 0)
++                left ^= 0x11D;
++        }
++        return (byte)product;
++    }
++
++    private sealed class SymbolMatrix(int size)
++    {
++        public int Size { get; } = size;
++        public bool[,] Modules { get; } = new bool[size, size];
++        public bool[,] FunctionModules { get; } = new bool[size, size];
++
++        public void SetFunction(int x, int y, bool dark)
++        {
++            if (x < 0 || y < 0 || x >= Size || y >= Size)
++                return;
++            Modules[y, x] = dark;
++            FunctionModules[y, x] = true;
++        }
++    }
++
++    private static bool[,] MakeSymbol(int version, byte[] codewords)
++    {
++        var size = version * 4 + 17;
++        var symbol = new SymbolMatrix(size);
++        DrawFinder(symbol, 3, 3);
++        DrawFinder(symbol, size - 4, 3);
++        DrawFinder(symbol, 3, size - 4);
++
++        for (var i = 8; i < size - 8; i++)
++        {
++            symbol.SetFunction(6, i, i % 2 == 0);
++            symbol.SetFunction(i, 6, i % 2 == 0);
++        }
++
++        DrawAlignmentPatterns(symbol, version);
++        DrawFormatBits(symbol, 0);
++        if (version >= 7)
++            DrawVersionBits(symbol, version);
++
++        DrawCodewords(symbol, codewords);
++        bool[,]? best = null;
++        var bestPenalty = int.MaxValue;
++        for (var mask = 0; mask < 8; mask++)
++        {
++            var candidate = (bool[,])symbol.Modules.Clone();
++            ApplyMask(candidate, symbol.FunctionModules, mask);
++            DrawFormatBits(symbol, mask);
++            CopyFunctionModules(candidate, symbol);
++            var penalty = CalculatePenalty(candidate);
++            if (penalty < bestPenalty)
++            {
++                bestPenalty = penalty;
++                best = (bool[,])candidate.Clone();
++            }
++        }
++
++        return best ?? throw new InvalidOperationException("Unable to select a QR mask.");
++    }
++
++    private static void DrawFinder(SymbolMatrix symbol, int centerX, int centerY)
++    {
++        for (var dy = -1; dy <= 7; dy++)
++        {
++            for (var dx = -1; dx <= 7; dx++)
++            {
++                var x = centerX + dx;
++                var y = centerY + dy;
++                var inside = dx >= 0 && dx <= 6 && dy >= 0 && dy <= 6;
++                var dark = inside && (dx == 0 || dx == 6 || dy == 0 || dy == 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4));
++                symbol.SetFunction(x, y, dark);
++            }
++        }
++    }
++
++    private static void DrawAlignmentPatterns(SymbolMatrix symbol, int version)
++    {
++        int[] centers = version switch
++        {
++            1 => [],
++            2 => [6, 18],
++            3 => [6, 22],
++            4 => [6, 26],
++            5 => [6, 30],
++            6 => [6, 34],
++            7 => [6, 22, 38],
++            8 => [6, 24, 42],
++            9 => [6, 26, 46],
++            10 => [6, 28, 50],
++            _ => throw new ArgumentOutOfRangeException(nameof(version))
++        };
++
++        foreach (var centerY in centers)
++        {
++            foreach (var centerX in centers)
++            {
++                if (symbol.FunctionModules[centerY, centerX])
++                    continue;
++                for (var dy = -2; dy <= 2; dy++)
++                {
++                    for (var dx = -2; dx <= 2; dx++)
++                    {
++                        var distance = Math.Max(Math.Abs(dx), Math.Abs(dy));
++                        symbol.SetFunction(centerX + dx, centerY + dy, distance != 1);
++                    }
++                }
++            }
++        }
++    }
++
++    private static void DrawFormatBits(SymbolMatrix symbol, int mask)
++    {
++        var data = (1 << 3) | mask; // Error-correction level L.
++        var remainder = data;
++        for (var i = 0; i < 10; i++)
++            remainder = (remainder << 1) ^ (((remainder >> 9) & 1) * 0x537);
++        var bits = ((data << 10) | remainder) ^ 0x5412;
++        var size = symbol.Size;
++
++        for (var i = 0; i <= 5; i++)
++            symbol.SetFunction(8, i, GetBit(bits, i));
++        symbol.SetFunction(8, 7, GetBit(bits, 6));
++        symbol.SetFunction(8, 8, GetBit(bits, 7));
++        symbol.SetFunction(7, 8, GetBit(bits, 8));
++        for (var i = 9; i < 15; i++)
++            symbol.SetFunction(14 - i, 8, GetBit(bits, i));
++
++        for (var i = 0; i < 8; i++)
++            symbol.SetFunction(size - 1 - i, 8, GetBit(bits, i));
++        for (var i = 8; i < 15; i++)
++            symbol.SetFunction(8, size - 15 + i, GetBit(bits, i));
++        symbol.SetFunction(8, size - 8, true);
++    }
++
++    private static void DrawVersionBits(SymbolMatrix symbol, int version)
++    {
++        var remainder = version;
++        for (var i = 0; i < 12; i++)
++            remainder = (remainder << 1) ^ (((remainder >> 11) & 1) * 0x1F25);
++        var bits = (version << 12) | remainder;
++        var size = symbol.Size;
++        for (var i = 0; i < 18; i++)
++        {
++            var dark = GetBit(bits, i);
++            var a = size - 11 + i % 3;
++            var b = i / 3;
++            symbol.SetFunction(a, b, dark);
++            symbol.SetFunction(b, a, dark);
++        }
++    }
++
++    private static bool GetBit(int value, int index) => ((value >> index) & 1) != 0;
++
++    private static void DrawCodewords(SymbolMatrix symbol, byte[] codewords)
++    {
++        var bitIndex = 0;
++        var upward = true;
++        for (var right = symbol.Size - 1; right >= 1; right -= 2)
++        {
++            if (right == 6)
++                right = 5;
++            for (var vertical = 0; vertical < symbol.Size; vertical++)
++            {
++                var y = upward ? symbol.Size - 1 - vertical : vertical;
++                for (var offset = 0; offset < 2; offset++)
++                {
++                    var x = right - offset;
++                    if (symbol.FunctionModules[y, x])
++                        continue;
++                    var dark = bitIndex < codewords.Length * 8
++                        && GetBit(codewords[bitIndex >> 3], 7 - (bitIndex & 7));
++                    symbol.Modules[y, x] = dark;
++                    bitIndex++;
++                }
++            }
++            upward = !upward;
++        }
++    }
++
++    private static void ApplyMask(bool[,] modules, bool[,] functionModules, int mask)
++    {
++        var size = modules.GetLength(0);
++        for (var y = 0; y < size; y++)
++        {
++            for (var x = 0; x < size; x++)
++            {
++                if (!functionModules[y, x] && IsMasked(mask, x, y))
++                    modules[y, x] = !modules[y, x];
++            }
++        }
++    }
++
++    private static bool IsMasked(int mask, int x, int y) => mask switch
++    {
++        0 => (x + y) % 2 == 0,
++        1 => y % 2 == 0,
++        2 => x % 3 == 0,
++        3 => (x + y) % 3 == 0,
++        4 => (x / 3 + y / 2) % 2 == 0,
++        5 => x * y % 2 + x * y % 3 == 0,
++        6 => (x * y % 2 + x * y % 3) % 2 == 0,
++        7 => ((x + y) % 2 + x * y % 3) % 2 == 0,
++        _ => throw new ArgumentOutOfRangeException(nameof(mask))
++    };
++
++    private static void CopyFunctionModules(bool[,] destination, SymbolMatrix symbol)
++    {
++        for (var y = 0; y < symbol.Size; y++)
++        {
++            for (var x = 0; x < symbol.Size; x++)
++            {
++                if (symbol.FunctionModules[y, x])
++                    destination[y, x] = symbol.Modules[y, x];
++            }
++        }
++    }
++
++    private static int CalculatePenalty(bool[,] modules)
++    {
++        var size = modules.GetLength(0);
++        var penalty = 0;
++        for (var y = 0; y < size; y++)
++        {
++            var runColor = modules[y, 0];
++            var runLength = 1;
++            for (var x = 1; x < size; x++)
++            {
++                if (modules[y, x] == runColor)
++                {
++                    runLength++;
++                    if (runLength == 5)
++                        penalty += 3;
++                    else if (runLength > 5)
++                        penalty++;
++                }
++                else
++                {
++                    runColor = modules[y, x];
++                    runLength = 1;
++                }
++            }
++        }
++
++        for (var x = 0; x < size; x++)
++        {
++            var runColor = modules[0, x];
++            var runLength = 1;
++            for (var y = 1; y < size; y++)
++            {
++                if (modules[y, x] == runColor)
++                {
++                    runLength++;
++                    if (runLength == 5)
++                        penalty += 3;
++                    else if (runLength > 5)
++                        penalty++;
++                }
++                else
++                {
++                    runColor = modules[y, x];
++                    runLength = 1;
++                }
++            }
++        }
++
++        var darkCount = 0;
++        for (var y = 0; y < size; y++)
++        {
++            for (var x = 0; x < size; x++)
++            {
++                if (modules[y, x])
++                    darkCount++;
++                if (x + 1 < size && y + 1 < size
++                    && modules[y, x] == modules[y, x + 1]
++                    && modules[y, x] == modules[y + 1, x]
++                    && modules[y, x] == modules[y + 1, x + 1])
++                    penalty += 3;
++            }
++        }
++
++        var percentDark = darkCount * 100 / (size * size);
++        penalty += Math.Abs(percentDark - 50) / 5 * 10;
++        return penalty;
++    }
++
++    private static string RenderSvg(bool[,] modules)
++    {
++        const int quietZone = 4;
++        var size = modules.GetLength(0);
++        var dimension = size + quietZone * 2;
++        var path = new StringBuilder();
++        for (var y = 0; y < size; y++)
++        {
++            for (var x = 0; x < size; x++)
++            {
++                if (modules[y, x])
++                    path.Append('M').Append(x + quietZone).Append(' ').Append(y + quietZone).Append("h1v1h-1z");
++            }
++        }
++
++        return $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{dimension}\" height=\"{dimension}\" viewBox=\"0 0 {dimension} {dimension}\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path d=\"{path}\" fill=\"#000\"/></svg>";
++    }
++}
+diff --git a/tests/UrlShortener.IntegrationTests/QrCodeEndpointTests.cs b/tests/UrlShortener.IntegrationTests/QrCodeEndpointTests.cs
+new file mode 100644
+index 0000000..b9d3ec4
+--- /dev/null
++++ b/tests/UrlShortener.IntegrationTests/QrCodeEndpointTests.cs
+@@ -0,0 +1,48 @@
++using System.Net;
++using System.Net.Http.Json;
++using System.Text.Json;
++using UrlShortener.Application.Links;
++using Xunit;
++
++namespace UrlShortener.IntegrationTests;
++
++public sealed class QrCodeEndpointTests(ApiFactory factory) : IClassFixture<ApiFactory>
++{
++    [Fact]
++    public async Task GetQrCodeForExistingLinkReturnsSvg()
++    {
++        using var client = factory.Client();
++        var request = new CreateLinkRequest("https://example.com/qr-test");
++        using var createResponse = await client.PostAsJsonAsync("/api/v1/links", request);
++
++        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
++        var createdLink = await createResponse.Content.ReadFromJsonAsync<LinkResponse>();
++        Assert.NotNull(createdLink);
++        Assert.False(string.IsNullOrWhiteSpace(createdLink.Code));
++
++        using var qrResponse = await client.GetAsync($"/api/v1/links/{createdLink.Code}/qr");
++
++        Assert.Equal(HttpStatusCode.OK, qrResponse.StatusCode);
++        Assert.Equal("image/svg+xml", qrResponse.Content.Headers.ContentType?.MediaType);
++        var svg = await qrResponse.Content.ReadAsStringAsync();
++        Assert.Contains("<svg", svg);
++        Assert.Contains("xmlns=\"http://www.w3.org/2000/svg\"", svg);
++        Assert.Contains("viewBox=\"0 0 ", svg);
++        Assert.Contains("<rect", svg);
++        Assert.Contains("<path", svg);
++    }
++
++    [Fact]
++    public async Task GetQrCodeForUnknownLinkReturnsProblemDetails()
++    {
++        using var client = factory.Client();
++        var unknownCode = $"missing-{Guid.NewGuid():N}";
++
++        using var response = await client.GetAsync($"/api/v1/links/{unknownCode}/qr");
++
++        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
++        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
++        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
++        Assert.Equal((int)HttpStatusCode.NotFound, document.RootElement.GetProperty("status").GetInt32());
++    }
++}

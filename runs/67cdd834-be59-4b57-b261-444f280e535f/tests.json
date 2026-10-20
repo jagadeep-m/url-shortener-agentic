@@ -1,0 +1,11 @@
+{
+  "summary": "Add an integration test covering normalized creation output and the redirect destination.",
+  "rationale": "The test exercises the failing end-to-end scenario with an uppercase scheme and host, an HTTPS default port, and a utm_ parameter, then verifies the redirect uses the stored normalized URL.",
+  "content": "## Test coverage\n\nVerify that creating a link returns the normalized destination and that following the generated short code redirects to that same destination.",
+  "files": [
+    {
+      "path": "tests/UrlShortener.IntegrationTests/LinkNormalizationHttpTests.cs",
+      "content": "using System.Net;\nusing System.Net.Http.Json;\nusing UrlShortener.Application.Links;\nusing Xunit;\n\nnamespace UrlShortener.IntegrationTests;\n\npublic sealed class LinkNormalizationHttpTests\n{\n    [Fact]\n    public async Task CreateLink_returns_normalized_destination_and_redirects_to_it()\n    {\n        using var factory = new ApiFactory();\n        using var client = factory.Client();\n        const string normalized = \u0022https://example.com/path?keep=1\u0022;\n\n        using var createResponse = await client.PostAsJsonAsync(\u0022/api/v1/links\u0022, new\n        {\n            longUrl = \u0022HTTPS://Example.COM:443/path?utm_source=campaign\u0026keep=1\u0022\n        });\n\n        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);\n        var link = await createResponse.Content.ReadFromJsonAsync\u003CLinkResponse\u003E();\n        Assert.NotNull(link);\n        Assert.Equal(normalized, link.LongUrl);\n\n        using var redirectResponse = await client.GetAsync($\u0022/{link.Code}\u0022);\n\n        Assert.Equal(HttpStatusCode.Redirect, redirectResponse.StatusCode);\n        Assert.Equal(normalized, redirectResponse.Headers.Location?.OriginalString);\n    }\n}\n"
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "runId": "0ce75786-e287-44f5-9fc9-99b9e5a240d0",
+  "scenario": "brownfield",
+  "replay": false,
+  "model": "gpt-6-luna",
+  "requirement": "Add an optional per-link click limit: POST /api/v1/links accepts maxClicks (1 to 1,000,000); once a link has recorded that many clicks, its redirect returns 410 Gone. Links without a limit must behave exactly as they do today.",
+  "maxMinutes": 20,
+  "maxTokens": 800000,
+  "retry": {
+    "maxAttempts": 3,
+    "backoff": "exponential",
+    "baseSeconds": 2
+  },
+  "stages": [
+    {
+      "id": "requirements",
+      "agent": "Requirements",
+      "dependsOn": [],
+      "risk": "high",
+      "wave": 1,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "impact",
+      "agent": "ImpactAnalyst",
+      "dependsOn": [
+        "requirements"
+      ],
+      "risk": "high",
+      "wave": 2,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "design",
+      "agent": "Architect",
+      "dependsOn": [
+        "impact"
+      ],
+      "risk": "high",
+      "wave": 3,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "implement",
+      "agent": "Coder",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "medium",
+      "wave": 4,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "docs",
+      "agent": "Docs",
+      "dependsOn": [
+        "design"
+      ],
+      "risk": "low",
+      "wave": 4,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "tests",
+      "agent": "Tester",
+      "dependsOn": [
+        "implement"
+      ],
+      "risk": "medium",
+      "wave": 5,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "validate",
+      "agent": "Reviewer",
+      "dependsOn": [
+        "implement",
+        "tests",
+        "docs"
+      ],
+      "risk": "medium",
+      "wave": 6,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    },
+    {
+      "id": "release",
+      "agent": "Release",
+      "dependsOn": [
+        "validate"
+      ],
+      "risk": "high",
+      "wave": 7,
+      "retry": {
+        "maxAttempts": 3,
+        "backoff": "exponential",
+        "baseSeconds": 2
+      }
+    }
+  ]
+}
