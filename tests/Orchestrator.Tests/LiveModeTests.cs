@@ -67,8 +67,9 @@ public sealed class LiveModeTests : IDisposable
              "Never: src/UrlShortener.Domain/../../secrets.cs, src/UrlShortener.Api/obj/Generated.cs, src/Orchestrator.Core/RunEngine.cs"],
             ["tests/UrlShortener.IntegrationTests/ApiFactory.cs"]);
 
-        Assert.Equal(new[] { "src/UrlShortener.Domain/ShortLink.cs", "tests/UrlShortener.IntegrationTests/ApiFactory.cs" }, files.Select(f => f.Path));
-        Assert.Contains("IsAvailableAt", files[0].Content);
+        // Role defaults come first, then files named by path.
+        Assert.Equal(new[] { "tests/UrlShortener.IntegrationTests/ApiFactory.cs", "src/UrlShortener.Domain/ShortLink.cs" }, files.Select(f => f.Path));
+        Assert.Contains("IsAvailableAt", files[1].Content);
     }
 
     [Fact]
@@ -121,11 +122,13 @@ public sealed class LiveModeTests : IDisposable
     }
 
     private const string Document = """{"summary":"s","rationale":"r","content":"c","files":[]}""";
+    private const string CoderDocument = """{"summary":"s","rationale":"r","content":"c","files":[{"path":"src/UrlShortener.Domain/X.cs","content":"class X { }"}]}""";
+    private const string TesterDocument = """{"summary":"s","rationale":"r","content":"c","files":[{"path":"tests/UrlShortener.UnitTests/XTests.cs","content":"class XTests { }"}]}""";
 
     [Fact]
     public async Task Coder_sees_current_files_and_never_the_absolute_path()
     {
-        var client = new CapturingClient("```json\n" + Document + "\n```"); // fenced JSON is accepted
+        var client = new CapturingClient("```json\n" + CoderDocument + "\n```"); // fenced JSON is accepted
         var coder = new CoderAgent(client) { Code = new CodeContext(root) };
         var result = await coder.RunAsync(new("implement", $"Fix this failure: error in {Path.GetFullPath(root)}/src/a.cs", []), Context("implement", "Coder"), default);
 
@@ -136,7 +139,25 @@ public sealed class LiveModeTests : IDisposable
         Assert.Equal(12288, new ArchitectAgent(client).Boundary.MaxTokens); // 6,144 was cut off in the first live run
         Assert.DoesNotContain(Path.GetFullPath(root), client.User[0].GetRawText());
         Assert.Contains("<workspace>/src/a.cs", client.User[0].GetProperty("prompt").GetString());
-        Assert.False(client.User[0].TryGetProperty("codebaseOutline", out _));
+        Assert.Contains("ShortLink { Code, IsAvailableAt }", client.User[0].GetProperty("codebaseOutline").GetString()); // the Coder sees the whole map too
+    }
+
+    [Fact]
+    public void Files_are_found_by_type_name_when_no_path_is_given()
+    {
+        // A live design said "change LinkEndpoints and ShortLink" without any path; the Coder then saw no code at all.
+        var files = new CodeContext(root).RelevantFiles(["Update LinkEndpoints to call the normalizer, and keep ShortLink unchanged. ShortLinkX is not a type."]);
+        Assert.Equal(new[] { "src/UrlShortener.Api/LinkEndpoints.cs", "src/UrlShortener.Domain/ShortLink.cs" }, files.Select(f => f.Path));
+    }
+
+    [Fact]
+    public async Task A_code_stage_that_returns_no_files_fails_with_the_models_explanation()
+    {
+        // A live Coder answered "Unable to implement: no source files were provided" with files=[], and the gate passed it.
+        var client = new CapturingClient("""{"summary":"Unable to implement: no source files were provided.","rationale":"r","content":"c","files":[]}""");
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => new CoderAgent(client) { Code = new CodeContext(root) }
+            .RunAsync(new("implement", "", []), Context("implement", "Coder"), default));
+        Assert.Equal("The Coder returned no file changes, but this stage must change code. Its explanation: Unable to implement: no source files were provided.", error.Message);
     }
 
     [Fact]
@@ -147,9 +168,11 @@ public sealed class LiveModeTests : IDisposable
         Assert.Contains("ShortLink { Code, IsAvailableAt }", impact.User[0].GetProperty("codebaseOutline").GetString());
         Assert.False(impact.User[0].TryGetProperty("currentFiles", out _));
 
-        var tester = new CapturingClient(Document);
+        var tester = new CapturingClient(TesterDocument);
         await new TesterAgent(tester) { Code = new CodeContext(root) }.RunAsync(new("tests", "", []), Context("tests", "Tester"), default);
-        Assert.Contains(tester.User[0].GetProperty("currentFiles").EnumerateArray(), f => f.GetProperty("path").GetString() == "tests/UrlShortener.IntegrationTests/ApiFactory.cs");
+        var testerFiles = tester.User[0].GetProperty("currentFiles").EnumerateArray().Select(f => f.GetProperty("path").GetString()).ToArray();
+        Assert.Contains("tests/UrlShortener.IntegrationTests/ApiFactory.cs", testerFiles);
+        Assert.Contains("src/UrlShortener.Api/LinkEndpoints.cs", testerFiles); // the API contract, so HTTP tests send the real request shape
 
         var requirements = new CapturingClient(Document);
         await new RequirementsAgent(requirements) { Code = new CodeContext(root) }.RunAsync(new("requirements", "", []), Context("requirements", "Requirements"), default);

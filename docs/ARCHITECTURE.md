@@ -210,10 +210,18 @@ replaces the scenario's requirement (replay is refused, because it only knows th
 scenarios). A real model cannot change code it has never seen, so every agent shares a read-only
 `CodeContext`, and each role declares what it needs (`SdlcAgent.Needs`):
 - **Outline** (files, types, members, endpoints, tables; built from Roslyn syntax trees): the
-  ImpactAnalyst and Architect, so seeds and designs name real types.
-- **Current files** (full contents of the existing product files named anywhere in the run's
-  accepted artifacts, plus role defaults such as `ApiFactory.cs` for the Tester): the Architect,
-  Coder, Tester, Docs and Reviewer.
+  ImpactAnalyst, Architect, Coder and Tester, so plans and code name real types.
+- **Current files**, in priority order:
+  1. role defaults: for the Tester, the test fixture `ApiFactory.cs` and the API contract
+     (`Contracts.cs`, `LinkEndpoints.cs`)
+  2. product files named by path anywhere in the run's accepted artifacts
+  3. files declaring a type the artifacts mention by name (a design that says "change LinkService"
+     names no path)
+
+  Given to the Architect, Coder, Tester, Docs and Reviewer.
+
+The Coder and Tester must return at least one file. An empty answer fails the attempt, with the
+model's own explanation as retry feedback, instead of passing the gate with nothing done.
 
 Reads are limited to product roots, with no `..` and no `bin`/`obj`, each file is capped at 24,000
 characters and the total at 120,000. The workspace's absolute path is replaced with `<workspace>` in

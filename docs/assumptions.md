@@ -221,3 +221,13 @@
   - the Architect's 6,144-token output limit was too small once designs cite code
   - the answer sheet's generated summary looked editable and went stale after edits; it is now
     labelled, and re-rendered whenever the sheet is shown again
+- The first live greenfield run (`27227535…`, URL normalizer) failed safely and exposed two more gaps,
+  both fixed with tests:
+  - The design named types (`LinkService`, `ShortLink`) but no paths, so the code context was empty.
+    The Coder correctly answered "unable to implement" with no files, and the gate wrongly passed
+    that. Files are now also found by type name, the Coder and Tester get the outline, and a
+    code-writing stage must return at least one file.
+  - The Tester never saw the API contract and guessed `url` for `longUrl`, so every HTTP test got
+    400. The Tester now always receives `Contracts.cs` and `LinkEndpoints.cs`.
+
+  Nothing broken landed: each failed attempt was rolled back and the run stopped as Failed.

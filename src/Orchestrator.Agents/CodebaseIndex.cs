@@ -42,6 +42,11 @@ public sealed class CodebaseIndex
     public IReadOnlyDictionary<string, string> Tables => tables;
     public IEnumerable<string> FilePaths => files.Select(f => f.Path);
 
+    // Type name -> the files that declare it (partial types and same-named types can span several files).
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> DeclaringFiles =>
+        files.SelectMany(f => f.Types.Keys.Select(type => (type, f.Path))).GroupBy(x => x.type, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(x => x.Path).Distinct().ToArray(), StringComparer.Ordinal);
+
     public static CodebaseIndex Build(string workspace, IReadOnlyList<string> roots)
     {
         var index = new CodebaseIndex();

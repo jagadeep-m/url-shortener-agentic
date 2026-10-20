@@ -28,6 +28,9 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
     public CodeContext? Code { get; init; }
     protected virtual CodeNeeds Needs => CodeNeeds.None;
     protected virtual IReadOnlyList<string> AlwaysInclude => [];
+    // Code-writing roles must change at least one file: an empty answer (for example "I cannot see the code") fails
+    // the attempt with the model's own explanation as feedback, instead of passing the gate with nothing done.
+    protected virtual bool RequiresFiles => false;
 
     protected virtual string OutputContract => "Return only JSON: {\"summary\":\"...\",\"rationale\":\"...\",\"content\":\"markdown artifact\",\"files\":[{\"path\":\"relative/path\",\"content\":\"full file text\"}]}. ";
     public abstract string Role { get; }
@@ -56,6 +59,8 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
         var used = ctx.Budget.AddTokens(response.Usage?.TotalTokenCount ?? 0);
         if (used > ctx.Budget.MaxTokens) throw new BudgetExceededException($"Run token budget exceeded ({used}/{ctx.Budget.MaxTokens}) by the {Role} call.");
         var document = Interpret(AgentDocument.Unwrap(response.Text), task, ctx);
+        if (RequiresFiles && document.Files.Count == 0)
+            throw new InvalidDataException($"The {Role} returned no file changes, but this stage must change code. Its explanation: {document.Summary}");
         if (document.Files.Count > 0 && Boundary.AllowedPaths.Count == 0) return new(false, null, "This role cannot write files.");
         return Result(task, ctx, document, Role);
     }
@@ -122,7 +127,8 @@ public sealed class CoderAgent(IChatClient client) : SdlcAgent(client)
         + "complete new content in files[], never a fragment or a diff, and keep all existing behaviour you were not asked to change. "
         + "The code must compile and the existing tests must still pass. " + EngineeringRules;
     public override AutonomyBoundary Boundary => new(["src/UrlShortener.*"], ["FileChangeService", "CodeContext"], 16384);
-    protected override CodeNeeds Needs => CodeNeeds.Files;
+    protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
+    protected override bool RequiresFiles => true;
     // There is no safe deterministic code; after retries and the simplified prompt the stage fails.
     public override AgentResult? CreateTemplate(AgentTask task, RunContext ctx) => null;
 }
@@ -133,8 +139,11 @@ public sealed class TesterAgent(IChatClient client) : SdlcAgent(client)
         + "Unit tests go in tests/UrlShortener.UnitTests; HTTP tests go in tests/UrlShortener.IntegrationTests as a new class using IClassFixture<ApiFactory> and factory.Client() (see ApiFactory.cs). "
         + "Add new test files instead of rewriting existing ones, and return complete files. Never claim tests passed; the host runs them. " + EngineeringRules;
     public override AutonomyBoundary Boundary => new(["tests/UrlShortener.*"], ["FileChangeService", "CodeContext"], 12288);
-    protected override CodeNeeds Needs => CodeNeeds.Files;
-    protected override IReadOnlyList<string> AlwaysInclude => ["tests/UrlShortener.IntegrationTests/ApiFactory.cs"];
+    protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
+    protected override bool RequiresFiles => true;
+    // The test fixture and the API contract, so HTTP tests send the real request shape (a live Tester once guessed "url" for "longUrl").
+    protected override IReadOnlyList<string> AlwaysInclude =>
+        ["tests/UrlShortener.IntegrationTests/ApiFactory.cs", "src/UrlShortener.Application/Links/Contracts.cs", "src/UrlShortener.Api/LinkEndpoints.cs"];
     public override AgentResult? CreateTemplate(AgentTask task, RunContext ctx) => null;
 }
 public sealed class DocsAgent(IChatClient client) : SdlcAgent(client)

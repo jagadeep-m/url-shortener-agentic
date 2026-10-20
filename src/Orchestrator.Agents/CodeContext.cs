@@ -19,13 +19,19 @@ public sealed partial class CodeContext(string workspace, IReadOnlyList<string>?
 
     public string Outline() => Redact(CodebaseIndex.Build(root, productRoots).Outline());
 
+    // Files are chosen in priority order: role defaults, then files named by path, then files declaring a type the
+    // texts mention by name (a design that says "change LinkService" names no path). Within each group, alphabetical.
     public IReadOnlyList<FileSnapshot> RelevantFiles(IEnumerable<string> texts, IEnumerable<string>? alwaysInclude = null)
     {
-        var named = texts.SelectMany(t => ProductPath().Matches(t ?? "").Select(m => m.Value.TrimEnd('.')))
-            .Concat(alwaysInclude ?? []).Distinct(StringComparer.Ordinal);
+        var all = string.Join("\n", texts.Select(t => t ?? ""));
+        var byPath = ProductPath().Matches(all).Select(m => m.Value.TrimEnd('.')).Order(StringComparer.Ordinal);
+        var byType = CodebaseIndex.Build(root, productRoots).DeclaringFiles
+            .Where(type => Regex.IsMatch(all, $@"\b{Regex.Escape(type.Key)}\b"))
+            .SelectMany(type => type.Value).Order(StringComparer.Ordinal);
+        var named = (alwaysInclude ?? []).Concat(byPath).Concat(byType).Distinct(StringComparer.Ordinal);
         var result = new List<FileSnapshot>();
         var total = 0;
-        foreach (var path in named.Order(StringComparer.Ordinal))
+        foreach (var path in named)
         {
             if (!IsReadable(path)) continue;
             var full = Path.Combine(root, path);

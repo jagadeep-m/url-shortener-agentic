@@ -28,7 +28,13 @@ public sealed class AgentTests : IDisposable
     [InlineData("Requirements")][InlineData("Architect")][InlineData("Coder")][InlineData("Tester")][InlineData("Docs")][InlineData("Reviewer")][InlineData("Release")]
     public async Task Roles_return_structured_artifacts_and_parent_decisions(string role)
     {
-        await Recording(Document().ToJson());
+        // Code-writing roles must return at least one file, so their fake answers carry one.
+        await Recording((role switch
+        {
+            "Coder" => Document(new FileChange("src/UrlShortener.Domain/X.cs", "class X { }")),
+            "Tester" => Document(new FileChange("tests/UrlShortener.UnitTests/XTests.cs", "class XTests { }")),
+            _ => Document()
+        }).ToJson());
         using var client = new ReplayChatClient(root, "demo");
         SdlcAgent agent = role switch { "Requirements" => new RequirementsAgent(client), "Architect" => new ArchitectAgent(client),
             "Coder" => new CoderAgent(client), "Tester" => new TesterAgent(client), "Docs" => new DocsAgent(client), "Reviewer" => new ReviewerAgent(client), _ => new ReleaseAgent(client) };
