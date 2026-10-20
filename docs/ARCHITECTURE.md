@@ -238,7 +238,10 @@ scenarios). A real model cannot change code it has never seen, so every agent sh
      `src/`, without migrations, so a design that names nothing still shows where new code must be
      called from
 
-  Given to the Architect, Coder, Tester, Docs and Reviewer, until the size budget runs out.
+  Given to the Architect, Coder, Tester, Docs and Reviewer, until the size budget runs out. The
+  Reviewer first gets every file the run has landed so far (`RunContext.ChangedFiles`, persisted
+  with the run), including test files, so a test written in an earlier round still counts after a
+  rework whose artifacts no longer name it.
 
 The Coder and Tester must return at least one file. An empty answer fails the attempt, with the
 model's own explanation as retry feedback, instead of passing the gate with nothing done.

@@ -8,6 +8,8 @@ namespace Orchestrator.Tests;
 // Found by a live greenfield run: the design named no files, so the Coder never saw LinkService and wrote an
 // unconnected UrlNormalizer; the Tester's correct tests failed and were blamed (rolled back five times).
 // Now code roles see the whole product source, new tests may land red, and validation sends the code back.
+// A later run reworked correctly, but the second review called a test missing that an earlier round had written:
+// the Reviewer saw only the files the latest artifacts named. It now sees every file the run changed.
 public sealed class RedTestsTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "red-" + Guid.NewGuid().ToString("N"));
@@ -108,6 +110,8 @@ public sealed class RedTestsTests : IDisposable
             throw new InvalidOperationException("not used");
     }
 
+    private RunContext? lastContext;
+
     private async Task<GateResult> ExitAsync(IAgent agent, string stage, Capture validation, params FileChange[] files)
     {
         using var activity = OrchestratorTelemetry.Source.StartActivity("red-tests");
@@ -116,6 +120,7 @@ public sealed class RedTestsTests : IDisposable
         var definition = new StageDefinition { Id = stage, Agent = agent.Role };
         var ctx = new RunContext { Scenario = new() { Stages = [definition] } };
         ctx.StageStatuses[stage] = new() { Attempts = 1 };
+        lastContext = ctx;
         Directory.CreateDirectory(Path.Combine(runs, ctx.RunId.ToString("D")));
         var content = agent.Role == "Reviewer" ? "# Review\n\nVerdict: PASS" : "# Tests";
         var output = new StageOutput(new Artifact(stage + ".json", new AgentDocument("s", "r", content, files).ToJson()));
@@ -148,6 +153,54 @@ public sealed class RedTestsTests : IDisposable
         var result = await ExitAsync(new CoderAgent(new NoModel()), "implement", new Capture(blocked), new FileChange("src/UrlShortener.Domain/Url.cs", "class Url { }"));
         Assert.False(result.Passed);
         Assert.Equal(blocked.Reason, result.Reason);
+    }
+
+    // ---- The Reviewer sees the whole run
+
+    [Fact]
+    public async Task Files_are_recorded_for_the_run_when_a_stage_lands_them_and_not_when_it_fails()
+    {
+        await ExitAsync(new TesterAgent(new NoModel()), "tests", new Capture(GateResult.Pass("ok")),
+            new FileChange("tests/UrlShortener.UnitTests/LinkNormalizationTests.cs", "class LinkNormalizationTests { }"));
+        Assert.Equal("tests", lastContext!.ChangedFiles["tests/UrlShortener.UnitTests/LinkNormalizationTests.cs"]);
+
+        await ExitAsync(new CoderAgent(new NoModel()), "implement", new Capture(GateResult.Block("dotnet build failed")),
+            new FileChange("src/UrlShortener.Domain/Url.cs", "class Url { }"));
+        Assert.Empty(lastContext!.ChangedFiles);
+    }
+
+    private sealed class Reply(string text) : BufferedChatClient
+    {
+        public string Instructions = "";
+        public string[] Shown = [];
+        public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var list = messages.ToList();
+            Instructions = list[0].Text;
+            using var user = System.Text.Json.JsonDocument.Parse(list[1].Text);
+            Shown = user.RootElement.GetProperty("currentFiles").EnumerateArray().Select(f => f.GetProperty("path").GetString()!).ToArray();
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, text)));
+        }
+    }
+
+    [Fact]
+    public async Task Reviewer_sees_every_file_the_run_changed_first_including_tests_from_earlier_rounds()
+    {
+        var ctx = new RunContext { Scenario = new() { Stages = [new() { Id = "validate", Agent = "Reviewer" }, new() { Id = "implement", Agent = "Coder" }] } };
+        ctx.StageStatuses["validate"] = new();
+        ctx.ChangedFiles["tests/UrlShortener.UnitTests/ExistingTests.cs"] = "tests";            // written in the first round
+        ctx.ChangedFiles["src/UrlShortener.Application/Links/LinkService.cs"] = "implement";
+        ctx.ChangedFiles["tests/UrlShortener.UnitTests/RolledBackTests.cs"] = "tests";         // no longer on disk: skipped
+
+        var reviewer = new Reply("""{"summary":"s","rationale":"r","content":"Verdict: PASS","files":[]}""");
+        Assert.True((await new ReviewerAgent(reviewer) { Code = new CodeContext(root) }.RunAsync(new("validate", "", []), ctx, default)).Success);
+        Assert.Equal(new[] { "src/UrlShortener.Application/Links/LinkService.cs", "tests/UrlShortener.UnitTests/ExistingTests.cs", "src/UrlShortener.Domain/ShortLink.cs" }, reviewer.Shown);
+        Assert.Contains("including tests from earlier rounds", reviewer.Instructions);
+
+        // Writing roles still see the product source only; the run's test files are the Reviewer's view.
+        var coder = new Reply("""{"summary":"s","rationale":"r","content":"c","files":[{"path":"src/UrlShortener.Domain/X.cs","content":"class X { }"}]}""");
+        await new CoderAgent(coder) { Code = new CodeContext(root) }.RunAsync(new("implement", "", []), ctx, default);
+        Assert.DoesNotContain("tests/UrlShortener.UnitTests/ExistingTests.cs", coder.Shown);
     }
 
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }

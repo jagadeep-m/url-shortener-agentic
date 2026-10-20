@@ -248,3 +248,10 @@
     are allowed when the build and all existing tests pass. Validation then runs everything, and a
     failure there reworks implement, tests and docs once with the failure details. Edited existing
     test classes are not tolerated, so the Tester cannot weaken existing tests to get through.
+- The fourth live greenfield run (`a6daadb7…`) showed both fixes working: the normalizer was wired
+  into `LinkService`, seven new tests landed red, validation reworked the code and all 103 tests
+  passed. The second review then failed with one real bug (a `?` inside a fragment is treated as a
+  query) and one false finding: it called a save-path test missing that the first round had written,
+  because the rework's artifacts no longer named that file. The Reviewer now sees every file the run
+  changed (only the Reviewer; writing roles keep the product-source view). The real bug still fails
+  the run, because rework stays bounded to one cycle.

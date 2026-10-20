@@ -122,6 +122,7 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
             reason += " Review verdict: PASS.";
         }
         await File.WriteAllTextAsync(ResultPath(ctx), JsonSerializer.Serialize(new AgentResult(true, output), AgentDocument.Json), ct);
+        foreach (var file in document.Files) ctx.ChangedFiles[file.Path] = Id;
         return GateResult.Pass(reason);
     }
 

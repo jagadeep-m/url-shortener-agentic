@@ -34,6 +34,8 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
     // Roles that design, write, test or review code see the whole product source (within the context budget), so they
     // never depend on an upstream artifact having named the right files.
     protected virtual bool WholeProductSource => false;
+    // Roles that judge the run's work see every file the run has changed so far, before anything else.
+    protected virtual bool SeesRunChanges => false;
 
     protected virtual string OutputContract => "Return only JSON: {\"summary\":\"...\",\"rationale\":\"...\",\"content\":\"markdown artifact\",\"files\":[{\"path\":\"relative/path\",\"content\":\"full file text\"}]}. ";
     public abstract string Role { get; }
@@ -76,7 +78,10 @@ public abstract class SdlcAgent(IChatClient client) : IAgent, ITemplateAgent
         if (Code is null) return payload;
         if (Needs.HasFlag(CodeNeeds.Outline)) payload["codebaseOutline"] = Code.Outline();
         if (Needs.HasFlag(CodeNeeds.Files))
-            payload["currentFiles"] = Code.RelevantFiles(ctx.Artifacts.Values.Select(a => a.Content).Concat(task.Inputs.Select(i => i.Content)).Append(ctx.Requirement), AlwaysInclude, WholeProductSource);
+        {
+            var first = (SeesRunChanges ? ctx.ChangedFiles.Keys.Order(StringComparer.Ordinal) : Enumerable.Empty<string>()).Concat(AlwaysInclude);
+            payload["currentFiles"] = Code.RelevantFiles(ctx.Artifacts.Values.Select(a => a.Content).Concat(task.Inputs.Select(i => i.Content)).Append(ctx.Requirement), first, WholeProductSource);
+        }
         return payload;
     }
 
@@ -167,9 +172,11 @@ public sealed class ReviewerAgent(IChatClient client) : SdlcAgent(client)
     public override string Role => "Reviewer";
     public override string RolePrompt => "Check the implementation, tests and docs against each requirement and the design: list each requirement with the code and test that cover it, "
         + "then any gaps or risks. Code that exists but is never called does not meet a requirement. Build and test results are supplied by the host; do not invent them. "
+        + "The current files start with every file this run has changed, including tests from earlier rounds; check them before calling a test missing. "
         + "End the content with a line 'Verdict: PASS' only if every requirement is met by working, called code and by tests; otherwise 'Verdict: FAIL' followed by the specific changes needed.";
     protected override CodeNeeds Needs => CodeNeeds.Files;
     protected override bool WholeProductSource => true;
+    protected override bool SeesRunChanges => true;
     protected override AgentDocument Interpret(string json, AgentTask task, RunContext ctx)
     {
         var document = AgentDocument.Parse(json);

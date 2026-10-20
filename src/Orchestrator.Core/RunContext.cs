@@ -40,6 +40,9 @@ public sealed class RunContext
     public string Requirement { get; set; } = string.Empty;
     public Scenario Scenario { get; init; } = new();
     public ConcurrentDictionary<string, Artifact> Artifacts { get; init; } = new(StringComparer.Ordinal);
+    // Every file a stage of this run has landed (path -> the stage that last changed it), kept across reworks
+    // so a reviewer sees tests from an earlier round even when the latest artifact no longer names them.
+    public ConcurrentDictionary<string, string> ChangedFiles { get; init; } = new(StringComparer.Ordinal);
     public ImmutableList<Decision> Decisions { get; set; } = [];
     // Decisions of stages that were re-run after a re-plan; kept for history, excluded as parents.
     public ImmutableHashSet<string> SupersededDecisions { get; set; } = [];
