@@ -18,7 +18,7 @@ The brief's core requirements and where each one lives:
 | Task decomposition | Scenario DAGs; design artifacts list tasks with dependencies; `plan.json` per run |
 | Codebase reasoning | ImpactAnalyst + Roslyn `CodebaseIndex`: affected files, endpoints, tables, tests |
 | Workflow orchestration | `RunEngine` / `StageExecutor`: DAG, entry/exit gates, parallel waves with a join, approvals, retries, fallback, rollback, safe-stop, policies, audit, metrics, re-planning |
-| Engineering output | Clean Architecture API with migrations and 238 tests; the brownfield change verified by the real gates |
+| Engineering output | Clean Architecture API with migrations and 242 tests; the brownfield change verified by the real gates |
 | Validation and risk control | Real `dotnet build` / `dotnet test` gates, six policies, budgets, human checkpoints |
 | Controlled autonomy | Role autonomy boundaries, a single write path, approvals on high-risk actions, `--auto-approve` only in CI |
 | Final summary | This document, [ARCHITECTURE.md](ARCHITECTURE.md), [TESTING.md](TESTING.md), [assumptions.md](assumptions.md), [adr/](adr/) |
@@ -57,7 +57,7 @@ Key choices (details in the ADRs):
 ## Artifacts
 
 - Source: `src/Orchestrator.*` (engine, agents, policies, CLI) and `src/UrlShortener.*` (product).
-- Tests: 238 across three projects; 90.4% line and 82.7% branch coverage of the solution.
+- Tests: 242 across three projects; 90.4% line and 82.7% branch coverage of the solution.
 - Scenarios: `scenarios/greenfield.yaml`, `brownfield.yaml` and `ambiguous.yaml`, with replay
   recordings.
 - Per run: `input.md`, `plan.json`, drafts, `audit.jsonl`, per-attempt build/test logs,
@@ -88,7 +88,7 @@ Key choices (details in the ADRs):
 
 ## Validation
 
-- Every phase ended green. The final state is 238 tests passing, repeated at least three times
+- Every phase ended green. The final state is 242 tests passing, repeated at least three times
   with no flakes.
 - All three scenarios ran end to end through the CLI with real git and real gates; results are
   committed.
@@ -105,7 +105,7 @@ All interpretations are in [assumptions.md](assumptions.md). The most important:
 - `maxAttempts` counts total attempts.
 - The time budget limits machine time per session (approval waits are excluded); the token budget is per run.
 - Rollback is scoped to agent-writable paths.
-- A policy Deny is not retried.
+- A policy Deny is not retried, except one correction for a file in another role's folders (ADR 0011).
 - Exit gates run the product's tests.
 - Brownfield adds a click limit, because both suggested changes already existed.
 - The ambiguous scenario ends at an approved scope rather than code.

@@ -123,6 +123,7 @@ public sealed class ArchitectAgent(IChatClient client) : SdlcAgent(client)
     public override string Role => "Architect";
     public override string RolePrompt => "Design the smallest change that meets the approved requirements in the existing codebase (its outline and current files are provided). "
         + "List every file to change or add with its full path, the data model and migration if any, endpoint and contract changes, risks and trade-offs, and an ordered task list. "
+        + "Group the files by the role that writes them: the Coder writes only src/UrlShortener.*, the Tester only tests/UrlShortener.*, the Docs agent only docs/. "
         + "Do not write the code. " + EngineeringRules;
     // Designs that cite the current code run long; 6,144 tokens was cut off in the first live run.
     public override AutonomyBoundary Boundary => new([], [], 12288);
@@ -135,7 +136,8 @@ public sealed class CoderAgent(IChatClient client) : SdlcAgent(client)
     public override string RolePrompt => "Implement the approved design in the existing code (current files are provided). For every file you change or add, return its "
         + "complete new content in files[], never a fragment or a diff, and keep all existing behaviour you were not asked to change. "
         + "Connect new code into the existing flow so the requirement is actually met (for example, call it from the service that handles the request); "
-        + "code that nothing calls does not meet a requirement. The code must compile and the existing tests must still pass. " + EngineeringRules;
+        + "code that nothing calls does not meet a requirement. The code must compile and the existing tests must still pass. "
+        + "Write only files under src/UrlShortener.*: the Tester writes the tests and the Docs agent writes docs/, so leave any design item for tests/ or docs/ to them. " + EngineeringRules;
     public override AutonomyBoundary Boundary => new(["src/UrlShortener.*"], ["FileChangeService", "CodeContext"], 16384);
     protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
     protected override bool WholeProductSource => true;

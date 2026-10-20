@@ -29,6 +29,8 @@ public sealed class StageState
     public string? CommitSha { get; set; }
     // How often this (reviewing) stage sent its upstream work back for rework.
     public int Reworks { get; set; }
+    // How often this stage was given a retry after writing outside its role's folders (at most once).
+    public int BoundaryCorrections { get; set; }
     public DateTime? StartedAtUtc { get; set; }
     public DateTime? FinishedAtUtc { get; set; }
 }

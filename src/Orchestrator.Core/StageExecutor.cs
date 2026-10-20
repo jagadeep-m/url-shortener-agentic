@@ -14,6 +14,8 @@ internal sealed class StageExecutor(RunSession session, IApprovalService approva
 {
     // A failed review sends upstream work back at most this many times before the run stops as Failed.
     internal const int MaxReworks = 1;
+    // A stage that writes outside its role's folders gets this many retries with the denial as feedback.
+    internal const int MaxBoundaryCorrections = 1;
 
     private RunContext Context => session.Context;
 
@@ -94,9 +96,17 @@ internal sealed class StageExecutor(RunSession session, IApprovalService approva
             await session.Audit.WriteAsync(Context.RunId, "human_input_required", definition, verdict: "blocked", message: needed.Message, ct: CancellationToken.None);
             throw new StageBlockedException(needed.Message);
         }
+        catch (PolicyViolationException violation) when (violation.Correctable && state.BoundaryCorrections < MaxBoundaryCorrections)
+        {
+            // Writing outside the role's folders is retried once with the denial as feedback; nothing was written.
+            await session.UpdateAsync(_ => { state.BoundaryCorrections++; state.LastFailure = violation.Message; state.Reason = violation.Message; });
+            await session.Audit.WriteAsync(Context.RunId, "policy_denied", definition, verdict: "deny",
+                message: $"{violation.Message} (one correction allowed)", ct: CancellationToken.None);
+            throw new AttemptFailedException(violation.Message);
+        }
         catch (PolicyViolationException violation)
         {
-            // A policy denial or a human rejection stops the stage: no retry, no fallback.
+            // Any other policy denial, a repeated boundary violation or a human rejection stops the stage: no retry, no fallback.
             await session.UpdateAsync(_ => { state.LastFailure = violation.RejectedByHuman ? null : violation.Message; state.Reason = violation.Message; });
             await session.Audit.WriteAsync(Context.RunId, violation.RejectedByHuman ? "policy_rejected" : "policy_denied", definition,
                 verdict: "deny", message: violation.Message, ct: CancellationToken.None);

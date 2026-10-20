@@ -31,7 +31,29 @@ public sealed class GuardrailTests : IDisposable
         var violation = await Assert.ThrowsAsync<PolicyViolationException>(() => Files(new Approval(true))
             .ApplyAsync([new(".github/workflows/deploy.yml", "on: push")], new(["*"], [], 100), new RunContext(), "docs", default));
         Assert.Contains("PathAllowlist", violation.Message);
+        Assert.False(violation.Correctable); // outside every agent path: a hard stop, never retried
         Assert.False(File.Exists(Path.Combine(root, ".github/workflows/deploy.yml")));
+    }
+
+    [Fact]
+    public async Task A_file_in_another_roles_folder_is_a_correctable_denial_that_names_the_allowed_folders()
+    {
+        var violation = await Assert.ThrowsAsync<PolicyViolationException>(() => Files(new Approval(true)).ApplyAsync(
+            [new("src/UrlShortener.Domain/Url.cs", "class Url { }"), new("tests/UrlShortener.UnitTests/UrlTests.cs", "class UrlTests { }")],
+            new(["src/UrlShortener.*"], [], 100), new RunContext(), "implement", default));
+        Assert.True(violation.Correctable);
+        Assert.Equal("Outside this agent's autonomy boundary (src/UrlShortener.*): tests/UrlShortener.UnitTests/UrlTests.cs. "
+            + "Return only files under src/UrlShortener.*; other roles write the rest.", violation.Message);
+        Assert.False(File.Exists(Path.Combine(root, "src/UrlShortener.Domain/Url.cs"))); // nothing of the change set is written
+    }
+
+    [Fact]
+    public void Design_and_coder_prompts_assign_each_folder_to_one_role()
+    {
+        // A live design listed test files among the Coder's tasks, and the Coder wrote them.
+        using var client = new ReplayChatClient(root, "unused");
+        Assert.Contains("the Coder writes only src/UrlShortener.*, the Tester only tests/UrlShortener.*, the Docs agent only docs/", new ArchitectAgent(client).RolePrompt);
+        Assert.Contains("leave any design item for tests/ or docs/ to them", new CoderAgent(client).RolePrompt);
     }
 
     [Fact]

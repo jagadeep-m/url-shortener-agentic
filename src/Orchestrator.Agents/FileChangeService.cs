@@ -20,7 +20,8 @@ public sealed class FileChangeService(string workspace, IEnumerable<IPolicy> pol
         if (rules.Length == 0) throw new InvalidOperationException("At least one file policy must be registered.");
         var outside = changes.Where(c => !PathPatterns.IsUnderAny(c.Path, boundary.AllowedPaths)).Select(c => c.Path).ToArray();
         if (outside.Length > 0)
-            throw new PolicyViolationException($"Outside this agent's autonomy boundary ({string.Join(", ", boundary.AllowedPaths)}): {string.Join(", ", outside)}");
+            throw new PolicyViolationException($"Outside this agent's autonomy boundary ({string.Join(", ", boundary.AllowedPaths)}): {string.Join(", ", outside)}. "
+                + $"Return only files under {string.Join(", ", boundary.AllowedPaths)}; other roles write the rest.", correctable: true);
 
         var proposed = await ProposeAsync(changes, paths, ct);
         var results = rules.Select(p => (p.Name, Result: p is IExplainablePolicy e ? e.Check(proposed, context) : new PolicyResult(p.Evaluate(proposed, context), "no detail"))).ToArray();

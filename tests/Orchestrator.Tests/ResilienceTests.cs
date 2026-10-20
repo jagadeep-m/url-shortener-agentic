@@ -106,6 +106,40 @@ public sealed class ResilienceTests : IDisposable
         Assert.Equal(2, events.Count(e => e == "retry_scheduled"));
     }
 
+    // A live Coder followed a design that listed test files and the run stopped; a write outside the role's
+    // folders now gets one retry with the denial as feedback. Nothing was written, so retrying is safe.
+    private const string Outside = "Outside this agent's autonomy boundary (src/UrlShortener.*): tests/UrlShortener.UnitTests/LinkServiceTests.cs.";
+
+    [Fact]
+    public async Task A_write_outside_the_roles_folders_is_retried_once_with_the_denial_as_feedback()
+    {
+        var calls = 0;
+        var stage = new Stage("implement") { Exit = _ => ++calls == 1 ? throw new PolicyViolationException(Outside, correctable: true) : GateResult.Pass("green") };
+        var result = await Engine().StartAsync(Plan(stage), "Build", [stage]);
+
+        Assert.Equal(RunStatus.Completed, result.Status);
+        Assert.Equal(new string?[] { null, Outside }, stage.FeedbackSeen);
+        Assert.Equal(1, result.StageStatuses["implement"].BoundaryCorrections);
+        var events = await Events(result.RunId);
+        Assert.Equal(new[] { "policy_denied", "retry_scheduled" }, events.SkipWhile(e => e != "policy_denied").Take(2));
+        Assert.DoesNotContain("stage_failed", events);
+    }
+
+    [Fact]
+    public async Task A_second_boundary_violation_or_any_other_denial_stops_the_stage()
+    {
+        var repeated = new Stage("implement") { Exit = _ => throw new PolicyViolationException(Outside, correctable: true) };
+        var result = await Engine().StartAsync(Plan(repeated), "Build", [repeated]);
+        Assert.Equal(RunStatus.Failed, result.Status);
+        Assert.Equal(2, repeated.Calls); // one correction, then stop: no third attempt
+
+        var secret = new Stage("docs") { Exit = _ => throw new PolicyViolationException("Denied by policy: SecretScan: a key-like value") };
+        var stopped = await Engine().StartAsync(Plan(secret), "Build", [secret]);
+        Assert.Equal(RunStatus.Failed, stopped.Status);
+        Assert.Equal(1, secret.Calls);
+        Assert.Equal(0, stopped.StageStatuses["docs"].BoundaryCorrections);
+    }
+
     [Fact]
     public async Task A_transient_failure_succeeds_on_retry()
     {

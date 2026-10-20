@@ -5,7 +5,7 @@ dotnet build
 dotnet test
 ```
 
-238 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
+242 tests, about 6 seconds, no network, no external database. Each test uses its own temporary
 SQLite file, runs directory and (where needed) git repository, and deletes them afterwards.
 Requires the .NET 8 runtimes (see the README).
 
@@ -42,17 +42,17 @@ Requires the .NET 8 runtimes (see the README).
 - RateLimitTests: per-IP 429 with `Retry-After`
 - ClickRecorderTests: queue capacity, bounded storage retries, graceful drain
 
-**Orchestrator.Tests (154)**
+**Orchestrator.Tests (158)**
 
 | Class | Covers |
 | --- | --- |
 | ScenarioTests | strict YAML, topological order, cycle and unknown-dependency errors, budget/retry validation, artifact hashing |
 | RunEngineTests | entry gate blocks, exit failure publishes nothing, approvals, checkpoints and resume across new instances, cancellation, lineage validation, run leases, stale-write protection, one audit line per event |
-| ResilienceTests | barrier-proven parallel waves with overlapping timestamps and a join; bounded retries carrying the failure reason; fallback order; token- and time-budget safe-stop; rollback on a real git repository |
+| ResilienceTests | barrier-proven parallel waves with overlapping timestamps and a join; bounded retries carrying the failure reason; a write in another role's folders retried once with the denial as feedback, while a second one or any other denial stops the stage; fallback order; token- and time-budget safe-stop; rollback on a real git repository |
 | GitWorkspaceTests | branch per run, commits scoped to agent paths, revert of modified and new files, refusal of dirty, staged or empty repositories |
 | AgentTests | every role's structured output and parent decisions; replay selection (variant, attempt, base); retry feedback in prompts; templates; boundary and symlink escapes; build/test output parsing |
 | PolicyTests | Allow, RequireApproval and Deny for each of the six policies; unified diff format, hunks and line numbers |
-| GuardrailTests | an agent cannot write `.github/` or commit a fake API key (and the key never reaches the audit log); approval shows reasons and the diff; new package detection |
+| GuardrailTests | an agent cannot write `.github/` (not correctable) or commit a fake API key; a file in another role's folders is a correctable denial naming the allowed folders and nothing is written; design and Coder prompts assign each folder to one role (and the key never reaches the audit log); approval shows reasons and the diff; new package detection |
 | WorkflowTests | greenfield replay end to end with real policies; Tester retry; editing design re-runs only downstream stages; resume after an edit; console approval paths |
 | MetricsTests | success rate, retry rate, MTTR, human wait, machine time and per-stage latency from a hand-written audit log; aggregates; live Meter instruments; report and lineage rendering |
 | CodebaseIndexTests | Roslyn endpoints with group prefixes, table mappings, affected files/endpoints/tables/tests, unknown seeds; indexes the real solution |

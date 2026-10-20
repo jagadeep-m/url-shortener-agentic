@@ -89,10 +89,13 @@ public interface IExplainablePolicy : IPolicy
     PolicyResult Check(ProposedChange change, RunContext ctx);
 }
 
-// A change that a policy denied or a human rejected. The stage stops instead of retrying.
-public sealed class PolicyViolationException(string message, bool rejectedByHuman = false) : InvalidOperationException(message)
+// A change that a policy denied or a human rejected. The stage stops instead of retrying (see Correctable).
+public sealed class PolicyViolationException(string message, bool rejectedByHuman = false, bool correctable = false) : InvalidOperationException(message)
 {
     public bool RejectedByHuman { get; } = rejectedByHuman;
+    // A file outside the role's own folders (for example a Coder writing tests) is a mistake the agent can fix:
+    // the stage gets one retry with this message as feedback. Every other denial stops the stage.
+    public bool Correctable { get; } = correctable;
 }
 
 // The stage cannot continue until a human supplies input (for example unanswered open questions).

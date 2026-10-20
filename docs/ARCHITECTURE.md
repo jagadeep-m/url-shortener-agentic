@@ -101,6 +101,7 @@ flowchart TD
     D -->|no| L
     AP2 --> L[Land, under the workspace lock: policies on the real diff, apply files, exit gate]
     L -->|policy Deny| FA[Stage Failed: no retry]
+    L -->|file in another role's folders, first time| RT
     L -->|gate fails| RB[Rollback agent paths to last good commit] --> RT{Retries left?}
     RT -->|yes: backoff, failure reason in next prompt| C
     RT -->|no| FB[Fallback: simplified prompt, then deterministic template] -->|all fail| FA
@@ -116,6 +117,9 @@ flowchart TD
   attempt.
 - **Retries:** Polly, at most 3 total attempts, exponential backoff, no jitter. Only attempt
   failures are retried; blocks, rejections, policy denials, cancellation and budget stops are not.
+  One exception: a file in another role's folders (a Coder writing `tests/`) is retried once with
+  the denial as feedback; a second one stops the stage (ADR 0011). The Architect's design groups
+  files by the role that writes them, and the Coder is told to leave tests and docs to their roles.
 - **Fallback:** one simplified-prompt attempt, then a deterministic template (read-only roles
   except the Reviewer, and Docs; Coder, Tester and Reviewer have no safe template), then the stage
   fails.
@@ -175,7 +179,7 @@ flowchart TD
 
 The global path policy additionally denies everything outside the product roots and all
 secret-bearing file types. Secret findings report `path:line` and never the value. A policy Deny
-stops the stage without retrying (ADR 0006).
+stops the stage without retrying (ADR 0006), except one correction for a file in another role's folders (ADR 0011).
 
 **Budgets and safe-stop.** The time budget limits **machine time** in each engine session: a
 `HumanWaitClock` times every approval (stage reviews and file-policy approvals alike, through
@@ -301,3 +305,4 @@ trusted-proxy configuration for rate limiting.
 | [0008](adr/0008-grounded-impact-analysis-and-human-answered-clarification.md) | Grounded impact analysis and human-answered clarification |
 | [0009](adr/0009-custom-dag-engine-over-a-workflow-framework.md) | A custom DAG engine rather than a workflow framework |
 | [0010](adr/0010-sqlite-only.md) | SQLite only, for the product and the orchestrator |
+| [0011](adr/0011-one-correction-for-role-boundary-denials.md) | One correction for a write in another role's folders (amends 0006) |

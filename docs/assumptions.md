@@ -255,3 +255,8 @@
   because the rework's artifacts no longer named that file. The Reviewer now sees every file the run
   changed (only the Reviewer; writing roles keep the product-source view). The real bug still fails
   the run, because rework stays bounded to one cycle.
+- The fifth live greenfield run (`ea1a66cd…`) stopped at implement: the approved design listed
+  `LinkServiceTests.cs` and `ApiTests.cs` among the files to change, and the Coder wrote them, which
+  its boundary denies. The design and Coder prompts now assign each folder to one role, and such a
+  denial is retried once with feedback instead of failing the run (ADR 0011). Writes outside the
+  agent paths, secrets and packages still stop at once.

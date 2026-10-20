@@ -16,7 +16,8 @@ approval prompts.
 interface, so audit lines and prompts explain verdicts without changing the core contract.
 
 Denials stop the stage instead of retrying. Re-prompting after a secret or a forbidden path
-invites the model to evade the rule; a human should look first. Uncertain cases (generic
+invites the model to evade the rule; a human should look first. (ADR 0011 allows one correction
+for a file in another role's folders, such as a Coder writing tests.) Uncertain cases (generic
 secret-looking strings, an unavailable vulnerability feed, large diffs, schema changes, new
 packages) ask for approval rather than allow or deny silently.
 
