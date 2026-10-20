@@ -39,8 +39,11 @@ public sealed class DotnetValidationRunner(string workspace, IReadOnlyList<strin
         var onlyNewTestsFail = tolerateFailuresIn.Count > 0 && summary.Failed > 0 && summary.FailingTests.Count == summary.Failed
             && summary.FailingTests.All(test => tolerateFailuresIn.Any(type => test.Contains($".{type}.", StringComparison.Ordinal)));
         if (onlyNewTestsFail)
+        {
+            var red = tolerateFailuresIn.Where(type => summary.FailingTests.Any(test => test.Contains($".{type}.", StringComparison.Ordinal)));
             return GateResult.Pass($"dotnet build succeeded and every existing test passes; {summary.Failed} new test(s) in "
-                + $"{string.Join(", ", tolerateFailuresIn)} fail against the current code (red), so validation will decide. First failures: {details}");
+                + $"{string.Join(", ", red)} fail against the current code (red), so validation will decide. First failures: {details}");
+        }
         return GateResult.Block($"dotnet test failed: {summary.Text}. First failures: {details} (see {logName}.test.log).");
     }
 
@@ -95,12 +98,16 @@ public static class DotnetOutput
     // The first failing tests with their assertion messages, so retries and reworks get concrete feedback.
     public static string FailureDetails(string output, int max = 3)
     {
-        var blocks = Regex.Matches(output, @"^\s*Failed (.+?) \[[^\]\r\n]*\]\s*$\s*Error Message:\s*(.*?)(?=^\s*Stack Trace:|^\s*Failed |\z)",
+        var blocks = Regex.Matches(output, @"^\s*Failed (.+?) \[[^\]\r\n]*\]\s*$\s*Error Message:\s*(.*?)(?=^\s*Failed |\z)",
             RegexOptions.Multiline | RegexOptions.Singleline);
         var parts = blocks.Take(max).Select(m =>
         {
-            var message = Regex.Replace(m.Groups[2].Value, @"\s+", " ").Trim();
-            return $"{m.Groups[1].Value}: {(message.Length > 300 ? message[..300] + "..." : message)}";
+            var split = m.Groups[2].Value.Split("Stack Trace:", 2);
+            var message = Regex.Replace(split[0], @"\s+", " ").Trim();
+            // The first frame in source code says whose code threw, for example a test reading a response twice.
+            var frame = split.Length > 1 ? Regex.Match(split[1], @"at [^\r\n]*? in [^\r\n]*?([^/\\\r\n]+\.cs):line (\d+)") : Match.Empty;
+            var where = frame.Success ? $" (thrown at {frame.Groups[1].Value}:line {frame.Groups[2].Value})" : "";
+            return $"{m.Groups[1].Value}: {(message.Length > 300 ? message[..300] + "..." : message)}{where}";
         }).ToArray();
         return parts.Length > 0 ? string.Join("; ", parts) : "see log";
     }

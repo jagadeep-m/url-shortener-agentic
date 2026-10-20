@@ -56,6 +56,8 @@ public sealed class FileChangeService(string workspace, IEnumerable<IPolicy> pol
 
     public bool Exists(string relativePath) => File.Exists(Resolve(relativePath));
 
+    public string? Read(string relativePath) => File.Exists(Resolve(relativePath)) ? File.ReadAllText(Resolve(relativePath)) : null;
+
     private static async Task<ProposedChange> ProposeAsync(IReadOnlyList<FileChange> changes, string[] paths, CancellationToken ct)
     {
         var diff = new System.Text.StringBuilder();

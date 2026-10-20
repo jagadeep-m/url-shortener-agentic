@@ -13,7 +13,8 @@ internal sealed class StageBlockedException(string message) : Exception(message)
 internal sealed class StageExecutor(RunSession session, IApprovalService approvals)
 {
     // A failed review sends upstream work back at most this many times before the run stops as Failed.
-    internal const int MaxReworks = 1;
+    // Two cycles: live reviews found real gaps a few at a time, and one cycle left a real, late finding unfixed.
+    internal const int MaxReworks = 2;
     // A stage that writes outside its role's folders gets this many retries with the denial as feedback.
     internal const int MaxBoundaryCorrections = 1;
 
@@ -167,6 +168,7 @@ internal sealed class StageExecutor(RunSession session, IApprovalService approva
                 ctx.DecisionCommits = ctx.DecisionCommits.SetItems(output.Decisions.Select(d => KeyValuePair.Create(d.Id, commit)));
             }
             state.ReplanReason = null;
+            state.InRework = false;
             state.Status = StageStatus.Completed;
             state.Reason = reason;
             state.LastFailure = null;

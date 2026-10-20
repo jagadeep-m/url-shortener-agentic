@@ -99,8 +99,12 @@ public sealed class RunEngine
                     return await FinishAsync(session, RunStatus.Blocked, invalidEdit);
                 if (context.Budget.TokensUsed >= context.Budget.MaxTokens)
                     throw new BudgetExceededException($"Token budget exhausted ({context.Budget.TokensUsed}/{context.Budget.MaxTokens}).");
-                var wave = ordered.Where(d => context.StageStatuses[d.Id].Status != StageStatus.Completed
+                var ready = ordered.Where(d => context.StageStatuses[d.Id].Status != StageStatus.Completed
                     && d.DependsOn.All(id => context.StageStatuses[id].Status == StageStatus.Completed)).ToArray();
+                // Reworked stages run one at a time in scenario order, so each sees the fix before it (a live Docs stage
+                // running beside the Coder documented the code as it was before the fix). The first pass stays parallel.
+                var wave = ready.Where(d => !context.StageStatuses[d.Id].InRework)
+                    .Concat(ready.Where(d => context.StageStatuses[d.Id].InRework).Take(1)).ToArray();
                 if (wave.Length == 0) break;
                 var outcomes = await RunWaveAsync(executor, wave, stages, tokenBudget, stop.Token);
                 var stopped = wave.Zip(outcomes).Where(x => x.Second is StageOutcome.Failed or StageOutcome.Blocked).ToArray();
@@ -216,9 +220,14 @@ public sealed class RunEngine
         await session.UpdateAsync(c =>
         {
             state.Reworks++;
-            foreach (var id in reworked) MarkStale(c.StageStatuses[id], $"The review failed. Fix these findings: {findings}", "Reworking after a failed review.");
+            foreach (var id in reworked)
+            {
+                MarkStale(c.StageStatuses[id], $"The review failed. Fix these findings: {findings}", "Reworking after a failed review.");
+                c.StageStatuses[id].InRework = true;
+            }
             foreach (var id in downstream) MarkStale(c.StageStatuses[id], "Upstream work was reworked after a failed review.", "Re-running after rework.");
-            MarkStale(state, "Review the reworked implementation again.", "Re-reviewing after rework.");
+            MarkStale(state, $"Review the reworked work again. Your earlier findings were: {findings} Check that each one is fixed, "
+                + "and review what the rework changed.", "Re-reviewing after rework.");
             c.SupersededDecisions = c.SupersededDecisions.Union(c.Decisions.Where(d => reworked.Contains(d.StageId)).Select(d => d.Id));
         });
         await audit.WriteAsync(context.RunId, "rework", verdict: "rework", ct: CancellationToken.None,

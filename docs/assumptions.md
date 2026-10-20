@@ -236,8 +236,8 @@
   met"), yet validate passed, because its gate only checked the build and tests. The review is now
   binding: `Verdict: FAIL` fails the gate and triggers one rework cycle, in which the Coder, Tester
   and Docs re-run with the findings. The Release agent must state READY or NOT READY.
-- Rework is bounded to one cycle (`StageExecutor.MaxReworks`) to cap cost and avoid endless
-  review loops; the human can still resume a failed run after changing the requirement or design.
+- Rework is bounded (`StageExecutor.MaxReworks`, two cycles since the run `6219083a…` below) to cap
+  cost and avoid endless review loops; the human can still resume a failed run after changing the requirement or design.
 - The third live greenfield run (`67cdd834…`) failed safely: the design named no files, the Coder
   again wrote an unconnected normalizer, and the Tester's correct tests were retried and rolled back
   as if they were wrong. Two fixes, with tests:
@@ -267,3 +267,36 @@
   validate stage runs the full suite before the review and gives the Reviewer that result as current
   (a failing run reworks without a model call), and the Reviewer can read the docs the run changed.
   The cost is one extra build and test run per review, accepted for evidence the Reviewer can trust.
+- The seventh live greenfield run (`696440e5…`) failed on a real finding: the reworked document said
+  encoded `utm_` names are kept, while the reworked code strips them. Docs had run beside the Coder,
+  so it described the code before the fix, and it added a second document instead of updating the
+  first. A rework now runs the reviewed stages one at a time in scenario order (implement, tests,
+  docs), and the Docs agent sees the run's changes and updates its own document. The first pass stays
+  parallel, as the specification asks.
+- The first run after that fix (`63a8e171…`, in a scratch clone) failed the other way round: the
+  Tester's new tests were wrong (one read its HTTP response twice, one counted every link in the
+  shared test database), landed red, and the Coder was retried three times against them. Red
+  tolerance now applies to every test class this run created at both the tests and implement gates;
+  validation stays strict, failure details name the source line that threw, and the Tester's prompt
+  names those two mistakes.
+- The next run (`484a3044…`) showed that working: validation caught a broken test, the rework fixed
+  it and all 91 tests passed. It then failed because the reworked Docs agent, given the failure as
+  rework feedback, wrote "this test currently fails" into the feature document. The Docs prompt now
+  says to document the feature, never the run's test results or review findings.
+- The following run (`7b077f47…`) completed: reviewed, reworked once for documentation gaps,
+  reviewed again with PASS, and released. Along the way the Reviewer was twice retried for a missing
+  `Verdict:` line (it had stated the verdict elsewhere), so the Reviewer's JSON now also carries a
+  `verdict` field that completes the content when the line is missing.
+- The next run (`6219083a…`) had no retries or gate failures at all. It failed only because the
+  second review found a new, real bug (a `?` inside a fragment was treated as a query), and one
+  rework cycle was the limit. Reviews had been reporting gaps a few at a time, so the Reviewer is now
+  asked to list every gap at once, the re-review gets its earlier findings to check, and rework is
+  bounded at two cycles instead of one.
+- The run after that (`4d964a3b…`) completed: validation caught two red tests, one rework fixed them
+  (105 tests passing), the review passed and the release was approved. Its remaining recovered
+  errors were a Coder compile error (fixed by the retry from the compiler message, as designed) and
+  two Docs schema retries with a generic message; the schema error now names the missing fields.
+- The confirmation run (`40a54cfa…`) on the final code completed: validation caught one red test,
+  one rework fixed it (95 tests passing), the review passed and the release was approved, with no
+  compile errors. Its only retry was a reworked Docs answer without a `files` key; a missing key now
+  means no file changes (Coder and Tester must still return files).

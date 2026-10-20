@@ -31,6 +31,8 @@ public sealed class StageState
     public int Reworks { get; set; }
     // How often this stage was given a retry after writing outside its role's folders (at most once).
     public int BoundaryCorrections { get; set; }
+    // Set while this stage is being redone after a failed review; such stages run one at a time (see RunEngine).
+    public bool InRework { get; set; }
     public DateTime? StartedAtUtc { get; set; }
     public DateTime? FinishedAtUtc { get; set; }
 }
@@ -45,6 +47,8 @@ public sealed class RunContext
     // Every file a stage of this run has landed (path -> the stage that last changed it), kept across reworks
     // so a reviewer sees tests from an earlier round even when the latest artifact no longer names them.
     public ConcurrentDictionary<string, string> ChangedFiles { get; init; } = new(StringComparer.Ordinal);
+    // The subset of ChangedFiles that did not exist before this run (path -> the stage that created it).
+    public ConcurrentDictionary<string, string> CreatedFiles { get; init; } = new(StringComparer.Ordinal);
     public ImmutableList<Decision> Decisions { get; set; } = [];
     // Decisions of stages that were re-run after a re-plan; kept for history, excluded as parents.
     public ImmutableHashSet<string> SupersededDecisions { get; set; } = [];

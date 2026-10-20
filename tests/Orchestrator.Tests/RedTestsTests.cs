@@ -74,7 +74,7 @@ public sealed class RedTestsTests : IDisposable
     [Fact]
     public void Only_failures_confined_to_new_test_classes_may_land_red()
     {
-        var red = DotnetValidationRunner.Judge(failed: true, Output, ["NormalizationTests"], "tests.attempt1");
+        var red = DotnetValidationRunner.Judge(failed: true, Output, ["FixedClock", "NormalizationTests"], "tests.attempt1"); // helpers that pass are not named
         Assert.True(red.Passed);
         Assert.Contains("2 new test(s) in NormalizationTests fail against the current code (red), so validation will decide", red.Reason);
         Assert.Contains("Expected: \"https://a.com/\"", red.Reason);
@@ -112,6 +112,7 @@ public sealed class RedTestsTests : IDisposable
     }
 
     private RunContext? lastContext;
+    private Action<RunContext>? setUp;
 
     private async Task<GateResult> ExitAsync(IAgent agent, string stage, Capture validation, params FileChange[] files)
     {
@@ -122,6 +123,7 @@ public sealed class RedTestsTests : IDisposable
         var ctx = new RunContext { Scenario = new() { Stages = [definition] } };
         ctx.StageStatuses[stage] = new() { Attempts = 1 };
         lastContext = ctx;
+        setUp?.Invoke(ctx);
         Directory.CreateDirectory(Path.Combine(runs, ctx.RunId.ToString("D")));
         var content = agent.Role == "Reviewer" ? "# Review\n\nVerdict: PASS" : "# Tests";
         var output = new StageOutput(new Artifact(stage + ".json", new AgentDocument("s", "r", content, files).ToJson()));
@@ -209,6 +211,14 @@ public sealed class RedTestsTests : IDisposable
         await new CoderAgent(coder) { Code = new CodeContext(root) }.RunAsync(new("implement", "", []), ctx, default);
         Assert.DoesNotContain("tests/UrlShortener.UnitTests/ExistingTests.cs", coder.Shown);
         Assert.DoesNotContain("docs/features/url-normalization.md", coder.Shown);
+
+        // Docs sees the run's changes too, so a rework updates its own document (a live rework added a second, disagreeing one).
+        var docs = new Reply("""{"summary":"s","rationale":"r","content":"c","files":[{"path":"docs/features/url-normalization.md","content":"# v2"}]}""");
+        ctx.Scenario.Stages.Add(new() { Id = "docs", Agent = "Docs" });
+        await new DocsAgent(docs) { Code = new CodeContext(root) }.RunAsync(new("docs", "", []), ctx, default);
+        Assert.Equal("docs/features/url-normalization.md", docs.Shown[0]);
+        Assert.Contains("update that file instead of adding another", docs.Instructions);
+        Assert.Contains("never mention test results, failing tests, review findings", docs.Instructions); // a live rework wrote "this test fails" into the doc
     }
 
     // ---- The Reviewer works from a fresh build and test run
@@ -244,6 +254,43 @@ public sealed class RedTestsTests : IDisposable
     }
 
     private System.Diagnostics.Activity? activity;
+
+    // ---- Neither code stage is blamed for the other's new tests
+
+    [Fact]
+    public async Task Coder_and_reworked_Tester_tolerate_only_test_classes_this_run_created()
+    {
+        // A live Coder was retried three times against a red test that read its HTTP response twice.
+        Write("tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs", "public sealed class UrlNormalizationTests { }"); // landed earlier in this run
+        setUp = ctx => ctx.CreatedFiles["tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs"] = "tests";
+
+        var coder = new Capture(GateResult.Pass("ok"));
+        await ExitAsync(new CoderAgent(new NoModel()), "implement", coder, new FileChange("src/UrlShortener.Domain/Url.cs", "class Url { }"));
+        Assert.Equal(new[] { "UrlNormalizationTests" }, coder.Tolerated); // ExistingTests predates the run: never tolerated
+        Assert.Equal("implement", lastContext!.CreatedFiles["src/UrlShortener.Domain/Url.cs"]);
+
+        var tester = new Capture(GateResult.Pass("ok"));                       // the rework edits its own earlier file
+        await ExitAsync(new TesterAgent(new NoModel()), "tests", tester,
+            new FileChange("tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs", "public sealed class UrlNormalizationTests { int fixedTest; }"));
+        Assert.Equal(new[] { "UrlNormalizationTests" }, tester.Tolerated);
+        Assert.False(lastContext!.CreatedFiles.ContainsKey("tests/UrlShortener.UnitTests/ExistingTests.cs"));
+    }
+
+    [Fact]
+    public void Failure_details_say_where_the_failure_was_thrown()
+    {
+        const string output = """
+              Failed UrlShortener.IntegrationTests.UrlNormalizationTests.Create(inputUrl: "HTTP://A.COM") [540 ms]
+              Error Message:
+               System.ObjectDisposedException : Cannot access a closed Stream.
+              Stack Trace:
+                 at System.IO.MemoryStream.Read(Byte[] buffer, Int32 offset, Int32 count)
+               at UrlShortener.IntegrationTests.UrlNormalizationTests.Create(String inputUrl) in /work/tests/UrlShortener.IntegrationTests/UrlNormalizationTests.cs:line 43
+            Failed!  - Failed:     1, Passed:    84, Skipped:     0, Total:    85, Duration: 1 s - UrlShortener.IntegrationTests.dll (net8.0)
+            """;
+        Assert.Equal("UrlShortener.IntegrationTests.UrlNormalizationTests.Create(inputUrl: \"HTTP://A.COM\"): System.ObjectDisposedException : Cannot access a closed Stream. "
+            + "(thrown at UrlNormalizationTests.cs:line 43)", DotnetOutput.FailureDetails(output));
+    }
 
     public void Dispose() { activity?.Dispose(); if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
 }

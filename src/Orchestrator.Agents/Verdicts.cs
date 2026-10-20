@@ -24,6 +24,30 @@ public static partial class Verdicts
         return (passed, findings.Length > MaxFindings ? findings[..MaxFindings] + "..." : findings);
     }
 
+    public static bool HasReview(string content) => ReviewLine().IsMatch(content);
+
+    // An upper-cased string field of the model's JSON answer, or null.
+    public static string? Field(string json, string name)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String
+                ? value.GetString()!.Trim().ToUpperInvariant() : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    // The JSON answer without one top-level field (unchanged when it is absent or the text is not a JSON object).
+    public static string WithoutField(string json, string name)
+    {
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(json) is System.Text.Json.Nodes.JsonObject node && node.Remove(name) ? node.ToJsonString() : json;
+        }
+        catch (System.Text.Json.JsonException) { return json; }
+    }
+
     // The Release agent must state "Recommendation: READY" or "Recommendation: NOT READY".
     public static bool Ready(string content)
     {

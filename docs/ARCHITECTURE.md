@@ -124,20 +124,28 @@ flowchart TD
   except the Reviewer, and Docs; Coder, Tester and Reviewer have no safe template), then the stage
   fails.
 - **Binding review and rework:** the Reviewer must end with `Verdict: PASS` or `Verdict: FAIL`
-  plus findings, and "code that is never called does not meet a requirement". After the real
+  plus findings (its JSON also carries a `verdict` field, which completes a review whose content
+  lacks the line), and "code that is never called does not meet a requirement". After the real
   build and tests pass, a FAIL still fails the validate gate (`review_failed`). The engine then
   marks the reviewed stages stale, with the findings as their re-plan reason, refreshes anything
-  after them, and reviews again (`rework`). At most one rework cycle runs; a second FAIL fails the
-  run. A failed review is reworked, not retried, since repeating the same review cannot fix the code.
+  after them, and reviews again (`rework`), with its earlier findings so it checks each was fixed.
+  At most two rework cycles run (`StageExecutor.MaxReworks`); a third FAIL fails the run. The
+  Reviewer is asked to list every gap in one review, so a single cycle can fix them all. A failed review is reworked, not retried, since repeating the same review cannot fix the code.
+  The first pass runs implement, tests and docs in parallel; a rework runs them one at a time in
+  scenario order (`StageState.InRework`), so the tests and docs see the code fix they follow.
+  The Docs agent also sees the files the run changed and updates its own document instead of adding
+  a second one.
 - **Red tests and validation rework:** new tests describe the requirement, so they may fail against
-  code that does not meet it yet. At the tests gate, failures confined to test classes in files the
-  Tester created may land "red" if the build and every existing test pass; anything else is retried
-  as before. The validate stage runs the full build and test suite before the Reviewer is asked, and
+  code that does not meet it yet, or be wrong themselves. At the tests and implement gates, failures
+  confined to test classes in files this run created (`RunContext.CreatedFiles`) may be "red" if the
+  build and every existing test pass, so neither stage is blamed for the other's new tests; anything
+  else is retried as before. The validate stage runs the full build and test suite before the Reviewer is asked, and
   gives the result to the Reviewer as the current state (earlier gate notes, such as "new tests are
   red", may predate later changes). It runs again at the exit gate. If either run fails, the engine reworks
-  implement, tests and docs (the same one rework cycle as a FAIL review) with the failing tests and
+  implement, tests and docs (the same rework cycles as a FAIL review) with the failing tests and
   their assertion messages as feedback, instead of blaming the tests. Gate reasons include the first
-  failing tests with their messages.
+  failing tests with their messages and the source line that threw, so a Tester can see a bug in its
+  own test.
 - **Release recommendation:** the Release agent must state `Recommendation: READY` or
   `NOT READY`. It's shown as `[READY]` or `[NOT READY]` at the start of the summary in the release
   prompt; the decision stays with the human.

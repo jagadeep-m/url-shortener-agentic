@@ -54,6 +54,8 @@ public sealed class GuardrailTests : IDisposable
         using var client = new ReplayChatClient(root, "unused");
         Assert.Contains("the Coder writes only src/UrlShortener.*, the Tester only tests/UrlShortener.*, the Docs agent only docs/", new ArchitectAgent(client).RolePrompt);
         Assert.Contains("leave any design item for tests/ or docs/ to them", new CoderAgent(client).RolePrompt);
+        // A live Tester read a response body twice and asserted a total count in the shared database.
+        Assert.Contains("assert on the records your test created, never on totals; read an HTTP response body only once", new TesterAgent(client).RolePrompt);
     }
 
     [Fact]

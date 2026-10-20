@@ -109,19 +109,22 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
     }
 
     // Stages that change C# sources, and the Reviewer, must pass a real dotnet build and dotnet test.
-    // The Tester's brand-new test classes may be red (they can be right and the code wrong); the Reviewer's full run
-    // decides, and a failure there sends the work back for rework rather than repeating the same review.
+    // Test classes this run created may be red at the Tester's and the Coder's gates: they can be right and the code
+    // wrong, or the reverse (a live Coder was retried three times against a test that read its response twice), so
+    // neither side is blamed for the other's work. Existing tests must pass. The Reviewer's full run is strict and
+    // decides; a failure there sends implement, tests and docs back for rework with the failure details.
     public async Task<GateResult> CheckExitAsync(RunContext ctx, StageOutput output, CancellationToken ct)
     {
         var document = AgentDocument.Parse(output.Artifact.Content);
-        var newTestClasses = agent.Role == "Tester" ? NewTestClasses(document) : [];
+        var created = document.Files.Where(f => !files.Exists(f.Path)).Select(f => f.Path).ToArray();
         await files.ApplyAsync(document.Files, agent.Boundary, ctx, Id, ct);
+        var runTestClasses = agent.Role is "Tester" or "Coder" ? RunTestClasses(ctx, created) : [];
         var reason = "Agent JSON and file boundaries validated.";
         var changesCode = document.Files.Any(f => f.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || f.Path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
         if (changesCode || agent.Role == "Reviewer")
         {
             // For the Reviewer this repeats the run made before the review: the gate checks what is actually landed.
-            var result = await validation.ValidateAsync(DirectoryFor(ctx), $"{Id}.attempt{ctx.StageStatuses[Id].Attempts}", newTestClasses, ct);
+            var result = await validation.ValidateAsync(DirectoryFor(ctx), $"{Id}.attempt{ctx.StageStatuses[Id].Attempts}", runTestClasses, ct);
             if (!result.Passed && agent.Role == "Reviewer")
                 throw new ReworkRequestedException($"The full build and test run failed at validation: {result.Reason}");
             if (!result.Passed) return result;
@@ -137,12 +140,15 @@ public sealed class AgentStage(StageDefinition definition, IAgent agent, FileCha
         }
         await File.WriteAllTextAsync(ResultPath(ctx), JsonSerializer.Serialize(new AgentResult(true, output), AgentDocument.Json), ct);
         foreach (var file in document.Files) ctx.ChangedFiles[file.Path] = Id;
+        foreach (var path in created) ctx.CreatedFiles[path] = Id;
         return GateResult.Pass(reason);
     }
 
-    // Classes declared in test files this answer creates (not ones it edits): only these may land red.
-    private string[] NewTestClasses(AgentDocument document) => document.Files
-        .Where(f => f.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && !files.Exists(f.Path))
-        .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(f.Content, @"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)").Select(m => m.Groups[1].Value))
-        .Distinct(StringComparer.Ordinal).ToArray();
+    // Classes declared in test files this run created (in this answer or an earlier landed stage), never in test files
+    // that existed before the run: only these may be red before validation.
+    private string[] RunTestClasses(RunContext ctx, IEnumerable<string> createdNow) => ctx.CreatedFiles.Keys.Concat(createdNow)
+        .Where(p => p.StartsWith("tests/", StringComparison.Ordinal) && p.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.Ordinal).Select(files.Read).OfType<string>()
+        .SelectMany(content => System.Text.RegularExpressions.Regex.Matches(content, @"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)").Select(m => m.Groups[1].Value))
+        .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 }

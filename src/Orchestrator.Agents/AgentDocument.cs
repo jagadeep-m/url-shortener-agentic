@@ -23,10 +23,18 @@ public sealed record AgentDocument(string Summary, string Rationale, string Cont
     public static AgentDocument Parse(string json)
     {
         var result = JsonSerializer.Deserialize<AgentDocument>(json, Json) ?? throw new InvalidDataException("Agent JSON is null.");
-        if (string.IsNullOrWhiteSpace(result.Summary) || string.IsNullOrWhiteSpace(result.Rationale)
-            || string.IsNullOrWhiteSpace(result.Content) || result.Files is null
-            || result.Files.Any(f => f is null || string.IsNullOrWhiteSpace(f.Path) || f.Content is null))
-            throw new InvalidDataException("Agent JSON requires summary, rationale, content and a files array with path/content entries.");
+        // A missing files key means no file changes (a live reworked Docs stage left it out when its document was already right);
+        // roles that must change code still fail on an empty list (SdlcAgent.RequiresFiles).
+        if (result.Files is null) result = result with { Files = [] };
+        // Name exactly what is missing: the message is the retry's feedback, and a generic one cost live Docs runs two attempts.
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(result.Summary)) missing.Add("summary");
+        if (string.IsNullOrWhiteSpace(result.Rationale)) missing.Add("rationale");
+        if (string.IsNullOrWhiteSpace(result.Content)) missing.Add("content (a non-empty markdown artifact, even when the work is in files)");
+        if (result.Files.Any(f => f is null || string.IsNullOrWhiteSpace(f.Path) || f.Content is null)) missing.Add("a path and content for every files entry");
+        if (missing.Count > 0)
+            throw new InvalidDataException("Agent JSON requires summary, rationale, content and a files array with path/content entries. Missing or empty: "
+                + string.Join("; ", missing) + ".");
         return result;
     }
     public string ToJson() => JsonSerializer.Serialize(this, Json);

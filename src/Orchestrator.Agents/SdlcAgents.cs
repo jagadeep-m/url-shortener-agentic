@@ -150,7 +150,9 @@ public sealed class TesterAgent(IChatClient client) : SdlcAgent(client)
     public override string Role => "Tester";
     public override string RolePrompt => "Write xUnit tests for the approved acceptance criteria and the implemented code, including failure paths. Use xUnit's Assert only. "
         + "Unit tests go in tests/UrlShortener.UnitTests; HTTP tests go in tests/UrlShortener.IntegrationTests as a new class using IClassFixture<ApiFactory> and factory.Client() (see ApiFactory.cs). "
-        + "Add new test files instead of rewriting existing ones, and return complete files. Never claim tests passed; the host runs them. " + EngineeringRules;
+        + "Add new test files instead of rewriting existing ones, and return complete files. Never claim tests passed; the host runs them. "
+        + "All tests in a class share one ApiFactory database, so assert on the records your test created, never on totals; read an HTTP response body only once. "
+        + "If a failure is thrown in your own test code, fix the test. " + EngineeringRules;
     public override AutonomyBoundary Boundary => new(["tests/UrlShortener.*"], ["FileChangeService", "CodeContext"], 12288);
     protected override CodeNeeds Needs => CodeNeeds.Outline | CodeNeeds.Files;
     protected override bool WholeProductSource => true;
@@ -164,8 +166,12 @@ public sealed class DocsAgent(IChatClient client) : SdlcAgent(client)
 {
     public override string Role => "Docs";
     public override string RolePrompt => "Document the change for users and operators in a new Markdown file under docs/ (for example docs/features/<feature-name>.md): "
-        + "what it does, API usage with an example request and response, configuration, and limitations.";
+        + "what it does, API usage with an example request and response, configuration, and limitations. "
+        + "Describe the code as it is in the current files, which start with every file this run has changed. If one of them is already this feature's "
+        + "document, update that file instead of adding another, so the run never leaves two documents that disagree. "
+        + "Document the feature, not this run: never mention test results, failing tests, review findings or work in progress.";
     protected override CodeNeeds Needs => CodeNeeds.Files;
+    protected override bool SeesRunChanges => true;
     public override AutonomyBoundary Boundary => new(["docs"], ["FileChangeService"], 8192);
     protected override IReadOnlyList<FileChange> TemplateFiles(AgentTask task, string content) => [new($"docs/generated/{task.StageId}-template.md", content)];
 }
@@ -174,15 +180,22 @@ public sealed class ReviewerAgent(IChatClient client) : SdlcAgent(client)
     public override string Role => "Reviewer";
     public override string RolePrompt => "Check the implementation, tests and docs against each requirement and the design: list each requirement with the code and test that cover it, "
         + "then any gaps or risks. Code that exists but is never called does not meet a requirement. Build and test results are supplied by the host; do not invent them. "
+        + "List every gap you find in this one review, so a single rework can fix them all. "
         + "The current files start with every file this run has changed, including tests and docs from earlier rounds; check them before calling a test or document missing. "
         + "End the content with a line 'Verdict: PASS' only if every requirement is met by working, called code and by tests; otherwise 'Verdict: FAIL' followed by the specific changes needed.";
     protected override CodeNeeds Needs => CodeNeeds.Files;
     protected override bool WholeProductSource => true;
     protected override bool SeesRunChanges => true;
+    // Live reviews sometimes stated the verdict only in the summary and were retried; the JSON field is the structured copy.
+    protected override string OutputContract => "Return only JSON: {\"summary\":\"...\",\"rationale\":\"...\",\"content\":\"markdown review ending with the Verdict line\","
+        + "\"verdict\":\"PASS or FAIL\",\"files\":[]}. ";
     protected override AgentDocument Interpret(string json, AgentTask task, RunContext ctx)
     {
-        var document = AgentDocument.Parse(json);
-        Verdicts.Review(document.Content); // a review without a verdict is retried
+        var verdict = Verdicts.Field(json, "verdict");
+        var document = AgentDocument.Parse(Verdicts.WithoutField(json, "verdict")); // the document schema stays strict
+        if (!Verdicts.HasReview(document.Content) && verdict is "PASS" or "FAIL")
+            document = document with { Content = $"{document.Content.TrimEnd()}\n\nVerdict: {verdict}" + (verdict == "FAIL" ? $" {document.Summary}" : "") };
+        Verdicts.Review(document.Content); // a review with no verdict at all is retried
         return document;
     }
     // A review cannot be produced without judgement; there is no safe template.
